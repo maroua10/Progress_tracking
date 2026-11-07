@@ -531,6 +531,7 @@ export default function App() {
                 <span>Accès parent</span>
               </button>
             )}
+            {data && <a className="nav-item" href="/auth/password"><Icon name="edit"/><span>Mon mot de passe</span></a>}
             {data && (
               <button
                 className="nav-item muted"
@@ -1289,49 +1290,6 @@ function Access({ data, onRename, onCreate, onRevoke }: AnyData) {
   return (
     <div className="access-grid">
       <ParentAccounts/>
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <span className="eyebrow">CONSULTATION EN LECTURE SEULE</span>
-            <h2>Liens de consultation</h2>
-          </div>
-          <button className="button small" onClick={onCreate}>
-            Créer un lien
-          </button>
-        </div>
-        <div className="access-explainer">
-          <p>
-            Un lien donne accès aux seuls bilans publiés et à leurs PDF. Les
-            brouillons et notes privées restent réservés au professeur.
-          </p>
-
-        </div>
-        {!data.grants.length ? (
-          <Empty title="Aucun lien de consultation">
-            Créez un lien, puis transmettez-le au parent.
-          </Empty>
-        ) : (
-          data.grants.map((g: AnyData) => (
-            <div className="grant-row" key={g.id}>
-              <div>
-                <strong>{g.label}</strong>
-                <small>
-                  Créé le {dateLabel(g.created_at.slice(0, 10))} ·{" "}
-                  {g.revoked_at ? "Révoqué" : "Actif"}
-                </small>
-              </div>
-              {!g.revoked_at && (
-                <button
-                  className="button small secondary"
-                  onClick={() => onRevoke(g)}
-                >
-                  Révoquer
-                </button>
-              )}
-            </div>
-          ))
-        )}
-      </section>
       <section className="panel settings-panel">
         <span className="eyebrow">LE SUIVI</span>
         <h2>{data.student.name}</h2>

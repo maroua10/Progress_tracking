@@ -18,9 +18,10 @@
     "predev": "node scripts/sync-pdf-assets.mjs",
     "prebuild": "node scripts/sync-pdf-assets.mjs",
     "db:migrate": "node --env-file-if-exists=.env.local scripts/migrate.mjs",
-    "auth:teacher": "node --env-file-if-exists=.env.local scripts/invite-teacher.mjs",
+    "auth:teacher": "node --env-file-if-exists=.env.local scripts/create-accounts.mjs --role teacher",
     "test:postgres": "REPERE_TEST_POSTGRES=1 node --import ./scripts/sites-env.mjs --test tests/api.integration.mjs",
-    "test:auth": "node --import ./scripts/sites-env.mjs --test tests/auth.integration.mjs"
+    "test:auth": "node --import ./scripts/sites-env.mjs --test tests/auth.integration.mjs",
+    "auth:accounts": "node --env-file-if-exists=.env.local scripts/create-accounts.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

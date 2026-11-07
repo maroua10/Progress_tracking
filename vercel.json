@@ -1,7 +1,14 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "buildCommand": "npm run build",
+  "buildCommand": "node scripts/vercel-build.mjs",
   "installCommand": "npm ci",
-  "functions": { "app/api/**/*.ts": { "maxDuration": 60 }, "app/auth/**/*.ts": { "maxDuration": 30 } }
+  "functions": {
+    "app/api/**/*.ts": {
+      "maxDuration": 60
+    },
+    "app/auth/**/*.ts": {
+      "maxDuration": 30
+    }
+  }
 }

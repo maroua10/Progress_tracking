@@ -79,7 +79,8 @@ const parentCookie = (r: Request) =>
 export async function identity(r: Request) {
   if (resolveAccount) {
     const account = await resolveAccount();
-    if (account) return account;
+    if (!account) fail(401, "Connectez-vous avec l’un des deux comptes autorisés.");
+    return account;
   }
   const p = parentCookie(r);
   if (p) {
@@ -95,7 +96,6 @@ export async function identity(r: Request) {
       viewerKey: "parent:" + grant.id,
     };
   }
-  if (resolveAccount) fail(401, "Connectez-vous avec votre compte professeur ou parent invité.");
   const userId = r.headers.get("oai-authenticated-user-id");
   if (!userId) fail(401, "Connectez-vous pour accéder au suivi.");
   const owner = await one("SELECT user_id FROM owners WHERE id=?", "teacher");
@@ -1121,6 +1121,7 @@ export async function handle(r: Request, path: string[]) {
     return json({ ok: true });
   }
   if (route === "grants" && r.method === "POST") {
+    if(resolveAccount) fail(410, "Les liens sans compte sont désactivés.");
     await teacher(r);
     const input = await body(r);
     const token = [...crypto.getRandomValues(new Uint8Array(32))]
@@ -1458,6 +1459,7 @@ export async function handle(r: Request, path: string[]) {
   return fail(404, "Cette action est introuvable.");
 }
 export async function parentExchange(r: Request, token: string) {
+  if(resolveAccount) return new Response(null,{status:303,headers:{Location:"/login","Cache-Control":"no-store"}});
   if (!/^[a-f0-9]{64}$/.test(token))
     return json({ error: "Lien invalide." }, 404);
   const digest = await hash(token);
