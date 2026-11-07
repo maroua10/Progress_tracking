@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import {readJsonResponse} from '../lib/client-response';
-export default function LoginForm({configured, initialError, passwordOnly=false}: {configured:boolean;initialError?:string;passwordOnly?:boolean}) {
+export default function LoginForm({configured, initialError, passwordOnly=false,googleEnabled=false}: {configured:boolean;initialError?:string;passwordOnly?:boolean;googleEnabled?:boolean}) {
   const [role,setRole]=useState('teacher'),[email,setEmail]=useState(''),[password,setPassword]=useState(''),[confirm,setConfirm]=useState(''),[reset,setReset]=useState(false),[pending,setPending]=useState(false),[error,setError]=useState(initialError || ''),[message,setMessage]=useState('');
   async function submit(e:React.FormEvent) {
     e.preventDefault();setError('');setMessage('');
@@ -25,7 +25,7 @@ export default function LoginForm({configured, initialError, passwordOnly=false}
       {error && <p className="login-error" role="alert">{error}</p>}{message && <p className="login-success" role="status">{message}</p>}
       <button className="button" disabled={pending || !configured} type="submit">{pending?'Veuillez patienter…':passwordOnly?'Enregistrer et accéder au suivi':reset?'Envoyer l’e-mail':'Accéder à l’espace '+(role==='teacher'?'professeur':'parent')}</button>
     </form>
-    {!passwordOnly && role==='teacher' && <><button type="button" className="text-button login-forgot" onClick={()=>{setReset(!reset);setError('');setMessage('');}}>{reset?'Revenir à la connexion':'Mot de passe oublié ?'}</button><div className="login-divider"><span>ou</span></div><a aria-disabled={!configured} tabIndex={configured?0:-1} className="button secondary google-login" href={configured?'/auth/google?role='+role:undefined}><svg viewBox="0 0 20 20" width="19" height="19" aria-hidden="true"><path fill="currentColor" d="M18.4 10.2c0-.6-.1-1.2-.2-1.8H10v3.3h4.7a4 4 0 0 1-1.7 2.6 5.4 5.4 0 1 1-3-9.8c1.4 0 2.5.5 3.5 1.4L16 3.5A9 9 0 1 0 10 19c5.1 0 8.4-3.6 8.4-8.8Z"/></svg>Continuer avec Google</a></>}
+    {!passwordOnly && role==='teacher' && <><button type="button" className="text-button login-forgot" onClick={()=>{setReset(!reset);setError('');setMessage('');}}>{reset?'Revenir à la connexion':'Mot de passe oublié ?'}</button>{googleEnabled && <><div className="login-divider"><span>ou</span></div><a aria-disabled={!configured} tabIndex={configured?0:-1} className="button secondary google-login" href={configured?'/auth/google?role='+role:undefined}><svg viewBox="0 0 20 20" width="19" height="19" aria-hidden="true"><path fill="currentColor" d="M18.4 10.2c0-.6-.1-1.2-.2-1.8H10v3.3h4.7a4 4 0 0 1-1.7 2.6 5.4 5.4 0 1 1-3-9.8c1.4 0 2.5.5 3.5 1.4L16 3.5A9 9 0 1 0 10 19c5.1 0 8.4-3.6 8.4-8.8Z"/></svg>Continuer avec Google</a></>}</>}
     {!passwordOnly && role==='parent' && <p className="login-description">Pour réinitialiser un mot de passe oublié, contactez le professeur.</p>}
   </section><p className="login-footer">Accès réservé aux comptes professeur et parent autorisés.</p></main>;
 }

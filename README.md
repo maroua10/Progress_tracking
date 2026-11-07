@@ -43,7 +43,7 @@ Le professeur initialise ensuite le suivi de l’élève depuis l’application.
 2. Exécuter `npm run db:migrate`. Les migrations créent les tables, activent RLS, retirent l’accès direct aux rôles navigateur et créent le bucket privé `repere-private`. Le serveur utilise la connexion PostgreSQL privilégiée ; ne jamais la mettre dans une variable `NEXT_PUBLIC_`.
 3. Désactiver l’inscription publique dans Supabase Auth. L’application bloque aussi `/auth/register`, `/auth/signup` et les invitations publiques côté serveur. Le rôle ne dépend jamais d’un choix dans le formulaire. Régler Site URL sur `APP_URL` et autoriser précisément les callbacks de développement et de production.
 4. La récupération du mot de passe professeur par e-mail est facultative et nécessite un SMTP Supabase de production et les modèles `supabase/templates/`. Le compte parent fonctionne sans SMTP. En cas d’oubli, son professeur réinitialise son mot de passe.
-5. Pour la connexion Google du professeur uniquement : configurer un client OAuth Google dans Supabase. Seul le compte professeur déjà autorisé obtient l’accès. Les autres comptes Google sont refusés.
+5. Pour la connexion Google du professeur uniquement : configurer un client OAuth Google dans Supabase, puis définir `GOOGLE_AUTH_ENABLED=true` dans Vercel. Le bouton reste masqué tant que ce fournisseur n’est pas configuré. Seul le compte professeur déjà autorisé obtient l’accès. Les autres comptes Google sont refusés.
 
 Ces services doivent être réellement configurés : sans eux, la page de connexion affiche un état de configuration manquante et aucun faux compte n’est activé.
 
@@ -55,7 +55,7 @@ Les PDF de 10 Mo sont envoyés directement dans le stockage privé par URL d’e
 
 ## Reprise de l’ancienne installation Sites
 
-L’ancienne installation utilise D1/R2. Ses données et ses PDF ne sont pas transférés par un push GitHub. Conserver cet hébergement le temps d’exporter les données depuis l’espace professeur et de migrer les fichiers vers Supabase en préservant leurs identifiants et empreintes. Les anciens liens et comptes Sites ne deviennent pas automatiquement des comptes Supabase. Aucun transfert de données réelles n’a été exécuté dans cette version du code.
+L’ancienne installation utilise D1/R2. Ses données et ses PDF ne sont pas transférés par un push GitHub. Conserver cet hébergement le temps d’exporter les données depuis l’espace professeur et de migrer les fichiers vers Supabase en préservant leurs identifiants et empreintes. Les anciens liens et comptes Sites ne deviennent pas automatiquement des comptes Supabase. Le transfert de l’historique est une opération distincte du push source ; les données et les documents restent dans les stockages privés.
 
 `drizzle/`, le runtime de test Worker et certains outils historiques sont conservés pour les tests de non-régression. Le runtime de production Next.js est `lib/runtime.ts` ; il ne fait pas confiance aux en-têtes d’identité de l’ancien hébergement.
 
