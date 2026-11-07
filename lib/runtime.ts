@@ -7,7 +7,12 @@ let database: ReturnType<typeof createDatabase> | undefined;
 function getDatabase() {
   if (!process.env.DATABASE_URL) throw new Error('La base de données n’est pas configurée.');
   if (!database) {
-    const sql = postgres(process.env.DATABASE_URL, { prepare: false, max: 3, idle_timeout: 20, connect_timeout: 15 });
+    // Supabase’s transaction pooler can stall pipelined queries. Keep reads
+    // concurrent across connections, with a single in-flight query per connection.
+    const sql = postgres(process.env.DATABASE_URL, {
+      prepare: false, max: 3, max_pipeline: 1,
+      idle_timeout: 20, connect_timeout: 15, queue_timeout: 15, query_timeout: 15,
+    });
     const execute: Execute = async (query, args) => { const rows = await sql.unsafe(query, args); return { rows: [...rows], count: rows.count }; };
     database = createDatabase(execute, fn => sql.begin(async tx => fn(async (query, args) => { const rows = await tx.unsafe(query, args); return { rows: [...rows], count: rows.count }; })) as Promise<any>);
   }
