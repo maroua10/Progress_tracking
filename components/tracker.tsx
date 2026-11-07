@@ -538,7 +538,7 @@ export default function App() {
                 aria-label={teacher ? "Se déconnecter" : "Quitter la consultation parent"}
                 onClick={async () => {
                   try {
-                    await fetch('/auth/logout',{method:'POST'});
+                    await fetch('/api/auth/logout',{method:'POST'});
                     for (let i=sessionStorage.length-1;i>=0;i--){ const k=sessionStorage.key(i);if(k?.startsWith('orbite-recovery-'))sessionStorage.removeItem(k); }
                     window.location.href='/login';
                   } catch (e) {
@@ -1980,7 +1980,7 @@ function SessionEditor({
                     setBusy(true);
                     try {
                       for (const file of files) {
-                        const uploadRequest=async(body:unknown)=>{const r=await fetch('/auth/uploads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const result:any=await r.json();if(!r.ok)throw new Error(result.error);return result;};
+                        const uploadRequest=async(body:unknown)=>{const r=await fetch('/api/auth/uploads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const result:any=await r.json();if(!r.ok)throw new Error(result.error);return result;};
                         const ticket=await uploadRequest({operation:'prepare',sessionId:id,name:file.name,size:file.size});
                         const sent=await fetch(ticket.url,{method:'PUT',headers:{'Content-Type':'application/pdf'},body:file});
                         if(!sent.ok)throw new Error('L’envoi du support a échoué. Réessayez.');

@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import {readJsonResponse} from '../lib/client-response';
 export default function LoginForm({configured, initialError, passwordOnly=false}: {configured:boolean;initialError?:string;passwordOnly?:boolean}) {
   const [role,setRole]=useState('teacher'),[email,setEmail]=useState(''),[password,setPassword]=useState(''),[confirm,setConfirm]=useState(''),[reset,setReset]=useState(false),[pending,setPending]=useState(false),[error,setError]=useState(initialError || ''),[message,setMessage]=useState('');
   async function submit(e:React.FormEvent) {
@@ -7,9 +8,8 @@ export default function LoginForm({configured, initialError, passwordOnly=false}
     if(passwordOnly && password!==confirm){setError('Les deux mots de passe doivent être identiques.');return;}
     setPending(true);
     try {
-      const r=await fetch('/auth/'+(passwordOnly?'password':reset?'reset':'login'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identifier:email,email,password,role})});
-      const result:any=await r.json();
-      if(!r.ok)throw new Error(result.error);
+      const r=await fetch('/api/auth/'+(passwordOnly?'password':reset?'reset':'login'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identifier:email,email,password,role})});
+      const result=await readJsonResponse(r);
       if(reset)setMessage(result.message);else window.location.assign('/');
     } catch(e){setError((e as Error).message || 'La connexion a échoué. Réessayez.');}finally{setPending(false);}
   }
