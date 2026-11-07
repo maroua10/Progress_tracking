@@ -7,7 +7,7 @@ import {
   reportCompactBoldFont,
 } from "./report-fonts";
 import { levelLabels, type Report, type Activity } from "./domain";
-export const REPORT_PDF_TEMPLATE = "repere-bilan-v2";
+export { REPORT_PDF_TEMPLATE, reportPdfName } from "./report-metadata";
 export type PdfContext = {
   studentName: string;
   chapterTitle: string;
@@ -50,9 +50,6 @@ function frenchDate(value: string, full = false) {
           year: "numeric" as const,
         }),
   }).format(new Date(value.length > 10 ? value : value + "T12:00:00Z"));
-}
-export function reportPdfName(report: Report, revision: number) {
-  return `Bilan - ${report.date} - ${(report.title || "Séance").replace(/[\x00-\x1f<>"/\\]/g, "").slice(0, 95)} - v${revision}.pdf`;
 }
 export async function renderReportPdf(
   report: Report,

@@ -60,6 +60,9 @@ test('Deux comptes fixes — base PostgreSQL et fournisseur d’authentification
    assert.equal((await call('login','POST',{identifier:'parent',password:credentials.password,role:'teacher'})).status,401);
    assert.equal((await call('login','POST',{identifier:'parent',password:credentials.password,role:'parent'})).status,200);
    assert.equal((await api('data')).status,200);assert.equal((await api('prepare','POST',{date:'2026-11-07'})).status,403);
+   const workspace=await api('workspace','POST',{date:'2026-11-07'});assert.equal(workspace.status,200);assert.equal((await workspace.json()).context.role,'parent');
+   for(const [path,method,data] of [['sessions','POST',{date:'2026-11-07',chapterId:'suites'}],['sessions/any','DELETE'],['sessions/any/restore','POST',{}],['trash','GET']])assert.equal((await api(path,method,data)).status,403);
+
    assert.equal((await api('export')).status,403);assert.equal((await call('parents','POST',{username:'pirate'})).status,403);
    assert.equal((await call('parents','DELETE',{id:'parent'})).status,403);
   });

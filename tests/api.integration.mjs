@@ -66,6 +66,8 @@ async function call(path, method = "GET", data, auth = "teacher", extra = {}) {
   } catch {}
   return { response, status: response.status, data: result };
 }
+const today=()=>new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Paris"}).format(new Date());
+function dateOfNextRegular(date){const d=new Date(date+"T12:00:00Z"),day=d.getUTCDay()||7; d.setUTCDate(d.getUTCDate()-day+3);return d.toISOString().slice(0,10);}
 let session, report, parentCookie, grantId, pdfId, firstPdfBytes;
 async function pdfText(bytes) {
   const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -1142,6 +1144,69 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
       for(let i=0;i<2;i++)assert.equal((await call('documents/'+pdfId,'GET',null,parentCookie)).status,200);
       const summary=(await call('data')).data.chapters.find(c=>c.id===chapter.id).metrics;
       assert.equal(summary.sessions,1);assert.equal(summary.tds,1);assert.equal(summary.evaluations,0);
+    });
+    await t.test("chargement groupé : mêmes bilans, statistiques historiques et protection parent", async () => {
+      for (const date of ["2025-12-31", "2026-11-07"]) {
+        const grouped = await call("workspace", "POST", {date}, parentCookie);
+        assert.equal(grouped.status, 200);
+        assert.equal(grouped.data.context.role, "parent");
+        assert.deepEqual(grouped.data.data, (await call("data?date="+date, "GET", null, parentCookie)).data);
+        assert.ok(!JSON.stringify(grouped.data).includes('privateNote'));
+      }
+      assert.equal((await call("workspace", "POST", {date:"invalide"})).status, 400);
+      assert.equal((await call("workspace", "POST", {date:"2026-11-07"}, null)).status, 401);
+      assert.equal((await call("workspace", "POST", {date:"2026-11-07"}, "teacher", {Origin:"https://autre.test"})).status, 403);
+    });
+    await t.test("ajout idempotent, corbeille des séances prévues et des brouillons, restauration intacte", async () => {
+      const date=today(), input={date, chapterId:"suites", requestKey:"test-add-session-unique"};
+      const first=await call("sessions", "POST", input);
+      assert.equal(first.status, 200);
+      const id=first.data.id;
+      assert.equal((await call("sessions", "POST", input)).data.id,id);
+      assert.equal((await call("sessions", "POST", {...input,date:"2026-01-01"})).status,409);
+      assert.equal((await call("sessions/"+id,"DELETE",null,parentCookie)).status,403);
+      assert.equal((await call("sessions/"+id+"/restore","POST",{},parentCookie)).status,403);
+      const editor=(await call("sessions/"+id)).data;
+      const draft={...editor.draft,title:"TEST — brouillon à conserver",privateNote:"TEST — note privée conservée"};
+      const saved=await call("sessions/"+id+"/draft","PUT",{report:draft,version:editor.session.version});
+      assert.equal(saved.status,200);
+      const savedDraft=(await call("sessions/"+id)).data.draft;
+      assert.equal((await call("sessions/"+id,"DELETE")).status,200);
+      assert.equal((await call("sessions/"+id,"DELETE")).status,200);
+      assert.equal((await call("sessions/"+id)).status,410);
+      assert.ok(!(await call("data")).data.historySessions.some(s=>s.id===id));
+      assert.equal((await call("trash")).data.sessions.find(s=>s.id===id).title,draft.title);
+      assert.equal((await call("sessions", "POST", input)).status,409);
+      assert.equal((await call("sessions/"+id+"/restore","POST",{})).status,200);
+      const restored=(await call("sessions/"+id)).data;
+      assert.deepEqual(restored.draft,savedDraft);
+      assert.ok(restored.session.version>saved.data.version);
+      assert.equal((await call("sessions/"+id+"/draft","PUT",{report:draft,version:saved.data.version})).status,409);
+      assert.equal((await call("sessions/absente","DELETE")).status,404);
+    });
+    await t.test("une séance habituelle supprimée ne revient pas à la préparation, et peut être restaurée", async () => {
+      const date=today();
+      await call("prepare","POST",{date});
+      const regular=await db.prepare("SELECT id FROM sessions WHERE origin_key=?").bind("regular-"+dateOfNextRegular(date)).first();
+      assert.ok(regular);
+      await call("sessions/"+regular.id,"DELETE");
+      await call("workspace","POST",{date});
+      assert.ok(!(await call("data")).data.sessions.some(s=>s.id===regular.id));
+      assert.ok((await call("trash")).data.sessions.some(s=>s.id===regular.id));
+      await call("sessions/"+regular.id+"/restore","POST",{});
+      assert.ok((await call("data")).data.sessions.some(s=>s.id===regular.id));
+    });
+    await t.test("suppression d’une séance publiée : PDF et statistiques retirés puis restaurés sans doublon", async () => {
+      const before=(await call("data")).data, published=before.historyReports[0], id=published.session_id;
+      await call("sessions/"+id,"DELETE");
+      assert.ok(!(await call("data")).data.historyReports.some(r=>r.session_id===id));
+      assert.ok([404,410].includes((await call("reports/"+id+"/pdf","GET",null,parentCookie)).status));
+      assert.ok((await call("trash")).data.sessions.some(s=>s.id===id));
+      await call("sessions/"+id+"/restore","POST",{});
+      const after=(await call("data")).data;
+      assert.deepEqual(after.chapters.map(c=>c.metrics),before.chapters.map(c=>c.metrics));
+      assert.equal(after.historyReports.filter(r=>r.session_id===id).length,1);
+      assert.equal((await call("reports/"+id+"/pdf","GET",null,parentCookie)).status,200);
     });
   } finally {
     await mf.dispose();

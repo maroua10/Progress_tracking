@@ -14,13 +14,8 @@ import {
   type Revision,
   type Skill,
 } from "./domain";
-import { renderChapterPdf, type ChapterSnapshot } from "./chapter-pdf";
-import { referencePdfBase64 } from "./reference-pdf";
-import {
-  renderReportPdf,
-  reportPdfName,
-  REPORT_PDF_TEMPLATE,
-} from "./report-pdf";
+import type { ChapterSnapshot } from "./chapter-pdf";
+import { reportPdfName, REPORT_PDF_TEMPLATE } from "./report-metadata";
 const studentId = "eleve";
 export class ApiError extends Error {
   constructor(
@@ -105,9 +100,11 @@ export async function identity(r: Request) {
 }
 export async function teacher(r: Request) {
   const actor = await identity(r);
-  if (actor.role !== "teacher")
-    fail(403, "L’accès parent est en lecture seule.");
+  requireTeacher(actor);
   return actor;
+}
+function requireTeacher(actor: { role: string }) {
+  if (actor.role !== "teacher") fail(403, "L’accès parent est en lecture seule.");
 }
 function checkOrigin(r: Request) {
   const origin = r.headers.get("origin");
@@ -304,9 +301,9 @@ async function chapterSnapshot(id: string, cutoff: string, dated: boolean): Prom
   return {title:c.title,studentName:(await one("SELECT name FROM students WHERE id=?",studentId)).name,closedAt:dated?cutoff:null,partial:!!c.partial,
     grid:{skills:parse(g.skills),source:parse(g.source)},metrics:metrics(latestRevisions((await allRevisions()).filter(r=>!hidden.has(r.session_id)),cutoff).filter(r=>r.payload.chapterId===id),parse(g.skills))};
 }
-async function closureList() {
-  const chapters=await rows("SELECT * FROM chapters WHERE student_id=?",studentId);
-  const events=await rows("SELECT * FROM chapter_events WHERE state='closed' AND recorded_at<=? ORDER BY recorded_at DESC",now());
+async function closureList(knownChapters?: Awaited<ReturnType<typeof rows>>, knownEvents?: Awaited<ReturnType<typeof rows>>) {
+  const chapters=knownChapters || await rows("SELECT * FROM chapters WHERE student_id=?",studentId);
+  const events=knownEvents?.filter(e=>e.state === "closed").reverse() || await rows("SELECT * FROM chapter_events WHERE state='closed' AND recorded_at<=? ORDER BY recorded_at DESC",now());
   return chapters.flatMap(c=>[
     ...events.filter(e=>e.chapter_id===c.id).map(e=>({id:e.id,closedAt:e.recorded_at})),
     ...(c.initial_state==='closed'?[{id:'initial-'+c.id,closedAt:null}]:[])
@@ -367,6 +364,208 @@ async function ensureDetailedGrids() {
       )
       .run();
   }
+}
+
+async function loadWorkspaceData(actor: Awaited<ReturnType<typeof identity>>, date: string, knownStudent?: Awaited<ReturnType<typeof one>>) {
+    if (!validDate(date)) fail(400, "La semaine demandée est invalide.");
+    const week = isoWeek(date),
+      cutoff = weekCutoff(week.sunday);
+    const [life, raw, viewed, chapterRows, gridRows, allEvents, snapshots, scheduled, documentRows, pastRows, student, grants] = await Promise.all([
+      lifecycle(), allRevisions(),
+      rows("SELECT session_id,seq FROM report_views WHERE viewer_key=?", actor.viewerKey),
+      rows("SELECT * FROM chapters WHERE student_id=? ORDER BY created_at,id", studentId),
+      rows("SELECT * FROM grids ORDER BY version"),
+      rows("SELECT * FROM chapter_events WHERE recorded_at<=? ORDER BY recorded_at,rowid", now()),
+      rows("SELECT id,payload FROM chapter_reports WHERE student_id=?", studentId),
+      rows("SELECT * FROM sessions WHERE student_id=? AND date>=? AND date<=? ORDER BY date,id", studentId, week.monday, week.sunday),
+      rows("SELECT id,session_id,name,size,created_at FROM documents WHERE student_id=? ORDER BY created_at DESC", studentId),
+      rows("SELECT id,date,chapter_id,status,draft FROM sessions WHERE student_id=? AND date<=? ORDER BY date DESC,id", studentId, todayParis()),
+      knownStudent ? Promise.resolve(knownStudent) : one("SELECT * FROM students WHERE id=?", studentId),
+      actor.role === "teacher" ? rows("SELECT id,label,created_at,revoked_at FROM grants WHERE student_id=? ORDER BY created_at DESC", studentId) : Promise.resolve([]),
+    ]);
+    const hiddenReports = hiddenResources(life, "report"), hiddenDocs = hiddenResources(life, "document");
+    const all = raw.filter(x => !hiddenReports.has(x.session_id)), eligible = all.filter(x => x.recorded_at <= cutoff);
+    const withViewed = (rs: Revision[]) => rs.map(x => ({...x, viewed: (viewed.find(v => v.session_id === x.session_id)?.seq || 0) >= x.seq}));
+    const published = withViewed(latestRevisions(eligible, cutoff)), historyReports = withViewed(latestRevisions(all, now()));
+    const events = allEvents.filter(e => e.recorded_at <= cutoff);
+    const chapterData = chapterRows.map((c) => {
+      const g =
+        gridRows
+          .filter((g) => g.chapter_id === c.id && g.created_at <= cutoff)
+          .at(-1) || gridRows.find((g) => g.chapter_id === c.id);
+      const grid = { ...g, skills: parse(g.skills), source: parse(g.source) };
+      const ev = events.filter((e) => e.chapter_id === c.id).at(-1);
+      const closing = events
+        .filter((e) => e.chapter_id === c.id && e.state === "closed")
+        .at(-1);
+      const closeGrid = closing
+        ? gridRows
+            .filter(
+              (g) =>
+                g.chapter_id === c.id && g.created_at <= closing.recorded_at,
+            )
+            .at(-1) || g
+        : null;
+      const savedSnapshot=closing && snapshots.find(s=>s.id===closing.id);
+      const finalMetrics = savedSnapshot ? parse(savedSnapshot.payload).metrics : closing
+        ? metrics(
+            latestRevisions(all, closing.recorded_at).filter(
+              (x) => x.payload.chapterId === c.id,
+            ),
+            parse(closeGrid.skills),
+          )
+        : null;
+      return {
+        ...c,
+        finalMetrics,
+        closureGrid: closeGrid
+          ? {
+              ...closeGrid,
+              skills: parse(closeGrid.skills),
+              source: parse(closeGrid.source),
+            }
+          : null,
+        closedAt: closing?.recorded_at || null,
+        state: ev?.state || c.initial_state,
+        stateNote: ev
+          ? ev.note || "État renseigné par le professeur"
+          : "Situation initiale déclarée · dates inconnues",
+        grid,
+        metrics: metrics(
+          published.filter((x) => x.payload.chapterId === c.id),
+          grid.skills,
+        ),
+      };
+    });
+    const weekSessions = scheduled
+      .filter((s) => {
+        if (hiddenReports.has(s.id)) return false;
+        const pub = published.find((p) => p.session_id === s.id);
+        return (
+          !all.some((p) => p.session_id === s.id) ||
+          (!!pub &&
+            pub.payload.date >= week.monday &&
+            pub.payload.date <= week.sunday)
+        );
+      })
+      .map((s) => {
+        const pub = published.find((p) => p.session_id === s.id);
+        return {
+          id: s.id,
+          date: s.date,
+          chapterId: s.chapter_id,
+          status: pub ? "published" : s.status,
+          hasDraft: actor.role === "teacher" && !!s.draft,
+          pdf: pub?.pdf,
+          preview:
+            pub?.payload ||
+            (actor.role === "teacher" && s.draft
+              ? ((d: Report) => ({
+                  title: d.title,
+                  chapterId: d.chapterId,
+                  skills: d.skills,
+                  activities: d.activities,
+                  documentIds: d.documentIds,
+                }))(parse(s.draft))
+              : undefined),
+          ...(pub ? { report: pub.payload, revision: pub.seq } : {}),
+          ...(actor.role === "teacher" ? { version: s.version } : {}),
+        };
+      });
+    for (const pub of published.filter(
+      (x) => x.payload.date >= week.monday && x.payload.date <= week.sunday,
+    )) {
+      if (!weekSessions.some((s) => s.id === pub.session_id))
+        weekSessions.push({
+          id: pub.session_id,
+          date: pub.payload.date,
+          chapterId: pub.payload.chapterId,
+          status: "published",
+          hasDraft: false,
+          preview: pub.payload,
+          report: pub.payload,
+          pdf: pub.pdf,
+          revision: pub.seq,
+        });
+    }
+    const visibleDocIds = new Set(
+      all
+        .filter((p) => p.recorded_at <= now() && p.payload.date <= todayParis())
+        .flatMap((p) => p.payload.documentIds),
+    );
+    const docs = documentRows.filter(
+      (d) =>
+        !hiddenDocs.has(d.id) &&
+        (actor.role === "teacher" || visibleDocIds.has(d.id)),
+    );
+    if (!hiddenDocs.has(referenceDocument.id)) docs.unshift(referenceDocument);
+    const pastSessions = pastRows
+      .filter((s) => !hiddenReports.has(s.id))
+      .map((s) => {
+        const report = historyReports.find((p) => p.session_id === s.id);
+        return {
+          id: s.id,
+          date: report?.payload.date || s.date,
+          chapterId: report?.payload.chapterId || s.chapter_id,
+          status: report ? "published" : s.status,
+          hasDraft: actor.role === "teacher" && !!s.draft,
+          report,
+          supportIds: actor.role === "teacher" && !report && s.draft ? parse(s.draft).documentIds : [],
+        };
+      });
+    return {
+      role: actor.role,
+      student,
+      week,
+      cutoff,
+      chapters: chapterData,
+      catalogue: actor.role === "teacher" ? chapterCatalogue : [],
+      sessions: weekSessions.sort((a, b) => a.date.localeCompare(b.date)),
+      reports: published,
+      historyReports,
+      historySessions: pastSessions,
+      revisions: all.filter(
+        (x) => x.recorded_at <= now() && x.payload.date <= todayParis(),
+      ),
+      documents: docs,
+      chapterReports: await closureList(chapterRows, allEvents),
+      grants,
+    };
+}
+async function prepareWeek(date: string) {
+    if (!validDate(date)) fail(400, "Date invalide.");
+    const w = isoWeek(date);
+    if (w.monday < isoWeek(todayParis()).monday) return;
+    await ensureDetailedGrids();
+    const chapters = await rows(
+      "SELECT c.*,COALESCE((SELECT state FROM chapter_events e WHERE e.chapter_id=c.id ORDER BY recorded_at DESC,e.rowid DESC LIMIT 1),c.initial_state) state FROM chapters c WHERE student_id=?",
+      studentId,
+    );
+    const chapter =
+      chapters.find((c) => c.state === "active") ||
+      chapters.find((c) => c.state === "revision") ||
+      chapters[0];
+    if (!chapter) return;
+    await db().batch(
+      [2, 5, 6].map((n) => {
+        const date = addDays(w.monday, n);
+        return db()
+          .prepare(
+            "INSERT OR IGNORE INTO sessions (id,student_id,origin_key,date,status,chapter_id,version,created_at,updated_at) VALUES (?,?,?,?,?,?,0,?,?)",
+          )
+          .bind(
+            uid(),
+            studentId,
+            "regular-" + date,
+            date,
+            "planned",
+            chapter.id,
+            now(),
+            now(),
+          );
+      }),
+    );
+    return;
 }
 
 export async function handle(r: Request, path: string[]) {
@@ -450,245 +649,25 @@ export async function handle(r: Request, path: string[]) {
     });
   const actor = await identity(r);
   if (actor.studentId !== studentId) fail(403, "Élève non autorisé.");
-  if (route === "data" && r.method === "GET") {
-    const date = new URL(r.url).searchParams.get("date") || todayParis();
+  if (route === "workspace" && r.method === "POST") {
+    const input = await body(r), date = input.date || todayParis();
     if (!validDate(date)) fail(400, "La semaine demandée est invalide.");
-    const week = isoWeek(date),
-      cutoff = weekCutoff(week.sunday);
-    const life = await lifecycle(),
-      hiddenReports = hiddenResources(life, "report"),
-      hiddenDocs = hiddenResources(life, "document");
-    const raw = await allRevisions(),
-      all = raw.filter((x) => !hiddenReports.has(x.session_id)),
-      eligible = all.filter((x) => x.recorded_at <= cutoff),
-      viewed = await rows(
-        "SELECT session_id,seq FROM report_views WHERE viewer_key=?",
-        actor.viewerKey,
-      ),
-      withViewed = (rs: Revision[]) =>
-        rs.map((x) => ({
-          ...x,
-          viewed:
-            (viewed.find((v) => v.session_id === x.session_id)?.seq || 0) >=
-            x.seq,
-        })),
-      published = withViewed(latestRevisions(eligible, cutoff)),
-      historyReports = withViewed(latestRevisions(all, now()));
-    const chapterRows = await rows(
-        "SELECT * FROM chapters WHERE student_id=? ORDER BY created_at,id",
-        studentId,
-      ),
-      gridRows = await rows("SELECT * FROM grids ORDER BY version"),
-      events = await rows(
-        "SELECT * FROM chapter_events WHERE recorded_at<=? ORDER BY recorded_at,rowid",
-        cutoff,
-      );
-    const snapshots=await rows("SELECT id,payload FROM chapter_reports WHERE student_id=?",studentId);
-    const chapterData = chapterRows.map((c) => {
-      const g =
-        gridRows
-          .filter((g) => g.chapter_id === c.id && g.created_at <= cutoff)
-          .at(-1) || gridRows.find((g) => g.chapter_id === c.id);
-      const grid = { ...g, skills: parse(g.skills), source: parse(g.source) };
-      const ev = events.filter((e) => e.chapter_id === c.id).at(-1);
-      const closing = events
-        .filter((e) => e.chapter_id === c.id && e.state === "closed")
-        .at(-1);
-      const closeGrid = closing
-        ? gridRows
-            .filter(
-              (g) =>
-                g.chapter_id === c.id && g.created_at <= closing.recorded_at,
-            )
-            .at(-1) || g
-        : null;
-      const savedSnapshot=closing && snapshots.find(s=>s.id===closing.id);
-      const finalMetrics = savedSnapshot ? parse(savedSnapshot.payload).metrics : closing
-        ? metrics(
-            latestRevisions(all, closing.recorded_at).filter(
-              (x) => x.payload.chapterId === c.id,
-            ),
-            parse(closeGrid.skills),
-          )
-        : null;
-      return {
-        ...c,
-        finalMetrics,
-        closureGrid: closeGrid
-          ? {
-              ...closeGrid,
-              skills: parse(closeGrid.skills),
-              source: parse(closeGrid.source),
-            }
-          : null,
-        closedAt: closing?.recorded_at || null,
-        state: ev?.state || c.initial_state,
-        stateNote: ev
-          ? ev.note || "État renseigné par le professeur"
-          : "Situation initiale déclarée · dates inconnues",
-        grid,
-        metrics: metrics(
-          published.filter((x) => x.payload.chapterId === c.id),
-          grid.skills,
-        ),
-      };
-    });
-    const scheduled = await rows(
-      "SELECT * FROM sessions WHERE student_id=? AND date>=? AND date<=? ORDER BY date,id",
-      studentId,
-      week.monday,
-      week.sunday,
-    );
-    const weekSessions = scheduled
-      .filter((s) => {
-        if (hiddenReports.has(s.id)) return false;
-        const pub = published.find((p) => p.session_id === s.id);
-        return (
-          !all.some((p) => p.session_id === s.id) ||
-          (!!pub &&
-            pub.payload.date >= week.monday &&
-            pub.payload.date <= week.sunday)
-        );
-      })
-      .map((s) => {
-        const pub = published.find((p) => p.session_id === s.id);
-        return {
-          id: s.id,
-          date: s.date,
-          chapterId: s.chapter_id,
-          status: pub ? "published" : s.status,
-          hasDraft: actor.role === "teacher" && !!s.draft,
-          pdf: pub?.pdf,
-          preview:
-            pub?.payload ||
-            (actor.role === "teacher" && s.draft
-              ? ((d: Report) => ({
-                  title: d.title,
-                  chapterId: d.chapterId,
-                  skills: d.skills,
-                  activities: d.activities,
-                  documentIds: d.documentIds,
-                }))(parse(s.draft))
-              : undefined),
-          ...(pub ? { report: pub.payload, revision: pub.seq } : {}),
-          ...(actor.role === "teacher" ? { version: s.version } : {}),
-        };
-      });
-    for (const pub of published.filter(
-      (x) => x.payload.date >= week.monday && x.payload.date <= week.sunday,
-    )) {
-      if (!weekSessions.some((s) => s.id === pub.session_id))
-        weekSessions.push({
-          id: pub.session_id,
-          date: pub.payload.date,
-          chapterId: pub.payload.chapterId,
-          status: "published",
-          hasDraft: false,
-          preview: pub.payload,
-          report: pub.payload,
-          pdf: pub.pdf,
-          revision: pub.seq,
-        });
-    }
-    const visibleDocIds = new Set(
-      all
-        .filter((p) => p.recorded_at <= now() && p.payload.date <= todayParis())
-        .flatMap((p) => p.payload.documentIds),
-    );
-    const docs = (
-      await rows(
-        "SELECT id,session_id,name,size,created_at FROM documents WHERE student_id=? ORDER BY created_at DESC",
-        studentId,
-      )
-    ).filter(
-      (d) =>
-        !hiddenDocs.has(d.id) &&
-        (actor.role === "teacher" || visibleDocIds.has(d.id)),
-    );
-    if (!hiddenDocs.has(referenceDocument.id)) docs.unshift(referenceDocument);
-    const pastSessions = (
-      await rows(
-        "SELECT id,date,chapter_id,status,draft FROM sessions WHERE student_id=? AND date<=? ORDER BY date DESC,id",
-        studentId,
-        todayParis(),
-      )
-    )
-      .filter((s) => !hiddenReports.has(s.id))
-      .map((s) => {
-        const report = historyReports.find((p) => p.session_id === s.id);
-        return {
-          id: s.id,
-          date: report?.payload.date || s.date,
-          chapterId: report?.payload.chapterId || s.chapter_id,
-          status: report ? "published" : s.status,
-          hasDraft: actor.role === "teacher" && !!s.draft,
-          report,
-          supportIds: actor.role === "teacher" && !report && s.draft ? parse(s.draft).documentIds : [],
-        };
-      });
-    return json({
-      role: actor.role,
-      student: await one("SELECT * FROM students WHERE id=?", studentId),
-      week,
-      cutoff,
-      chapters: chapterData,
-      catalogue: actor.role === "teacher" ? chapterCatalogue : [],
-      sessions: weekSessions.sort((a, b) => a.date.localeCompare(b.date)),
-      reports: published,
-      historyReports,
-      historySessions: pastSessions,
-      revisions: all.filter(
-        (x) => x.recorded_at <= now() && x.payload.date <= todayParis(),
-      ),
-      documents: docs,
-      chapterReports: await closureList(),
-      grants:
-        actor.role === "teacher"
-          ? await rows(
-              "SELECT id,label,created_at,revoked_at FROM grants WHERE student_id=? ORDER BY created_at DESC",
-              studentId,
-            )
-          : [],
-    });
+    const student = await one("SELECT * FROM students WHERE id=?", studentId);
+    const context = { ...actor, needsSetup: !student && actor.role === "teacher", signedIn: true, accountLogin: !!resolveAccount, canReturnToTeacher: false };
+    if (!student) return json({ context, data: null });
+    if (actor.role === "teacher") await prepareWeek(date);
+    return json({ context, data: await loadWorkspaceData(actor, date, student) });
+  }
+  if (route === "data" && r.method === "GET") {
+    return json(await loadWorkspaceData(actor, new URL(r.url).searchParams.get("date") || todayParis()));
   }
   if (route === "prepare" && r.method === "POST") {
-    await teacher(r);
-    await ensureDetailedGrids();
-    const input = await body(r);
-    if (!validDate(input.date)) fail(400, "Date invalide.");
-    const w = isoWeek(input.date);
-    if (w.monday < isoWeek(todayParis()).monday) return json({ ok: true });
-    const chapters = await rows(
-      "SELECT c.*,COALESCE((SELECT state FROM chapter_events e WHERE e.chapter_id=c.id ORDER BY recorded_at DESC,e.rowid DESC LIMIT 1),c.initial_state) state FROM chapters c WHERE student_id=?",
-      studentId,
-    );
-    const chapter =
-      chapters.find((c) => c.state === "active") ||
-      chapters.find((c) => c.state === "revision") ||
-      chapters[0];
-    await db().batch(
-      [2, 5, 6].map((n) => {
-        const date = addDays(w.monday, n);
-        return db()
-          .prepare(
-            "INSERT OR IGNORE INTO sessions (id,student_id,origin_key,date,status,chapter_id,version,created_at,updated_at) VALUES (?,?,?,?,?,?,0,?,?)",
-          )
-          .bind(
-            uid(),
-            studentId,
-            "regular-" + date,
-            date,
-            "planned",
-            chapter.id,
-            now(),
-            now(),
-          );
-      }),
-    );
+    requireTeacher(actor);
+    await prepareWeek((await body(r)).date);
     return json({ ok: true });
   }
   if (route === "sessions" && r.method === "POST") {
-    await teacher(r);
+    requireTeacher(actor);
     const input = await body(r);
     if (!validDate(input.date)) fail(400, "Date invalide.");
     if (
@@ -699,17 +678,17 @@ export async function handle(r: Request, path: string[]) {
       ))
     )
       fail(400, "Chapitre introuvable.");
-    const id = uid();
-    await db()
-      .prepare(
-        "INSERT INTO sessions (id,student_id,date,status,chapter_id,version,created_at,updated_at) VALUES (?,?,?,'planned',?,0,?,?)",
-      )
-      .bind(id, studentId, input.date, input.chapterId, now(), now())
-      .run();
-    return json({ id });
+    const requestKey = input.requestKey == null ? null : text(input.requestKey, 100);
+    if (requestKey !== null && !/^[a-zA-Z0-9-]{8,100}$/.test(requestKey)) fail(400, "Clé de création invalide.");
+    const originKey = requestKey ? "extra-" + requestKey : null, id = uid();
+    await db().prepare("INSERT OR IGNORE INTO sessions (id,student_id,origin_key,date,status,chapter_id,version,created_at,updated_at) VALUES (?,?,?,?,'planned',?,0,?,?)")
+      .bind(id, studentId, originKey, input.date, input.chapterId, now(), now()).run();
+    const saved = originKey ? await one("SELECT id,date,chapter_id FROM sessions WHERE student_id=? AND origin_key=?",studentId,originKey) : {id,date:input.date,chapter_id:input.chapterId};
+    if (!saved || saved.date !== input.date || saved.chapter_id !== input.chapterId || hiddenResources(await lifecycle(),"report").has(saved.id)) fail(409, "Cette demande a déjà été utilisée. Rechargez la liste des séances.");
+    return json({ id: saved.id });
   }
   if (path[0] === "sessions" && path[1]) {
-    await teacher(r);
+    requireTeacher(actor);
     const id = path[1];
     const session = await one(
       "SELECT * FROM sessions WHERE id=? AND student_id=?",
@@ -717,10 +696,21 @@ export async function handle(r: Request, path: string[]) {
       studentId,
     );
     if (!session) fail(404, "Séance introuvable.");
+    if ((path.length === 2 && r.method === "DELETE") || (path[2] === "restore" && path.length === 3 && r.method === "POST")) {
+      const action = r.method === "DELETE" ? "delete" : "restore";
+      const hidden = hiddenResources(await lifecycle(), "report");
+      if (hidden.has(id) === (action === "delete")) return json({ ok: true });
+      const at = now();
+      await db().batch([
+        db().prepare("INSERT INTO resource_events (id,student_id,kind,resource_id,action,recorded_at) VALUES (?,?,'report',?,?,?)").bind(uid(), studentId, id, action, at),
+        db().prepare("UPDATE sessions SET version=version+1,updated_at=? WHERE id=? AND student_id=?").bind(at,id,studentId),
+      ]);
+      return json({ ok: true });
+    }
     if (hiddenResources(await lifecycle(), "report").has(id))
       fail(
         410,
-        "Ce bilan est dans la corbeille. Restaurez-le avant de le modifier.",
+        "Cette séance est dans la corbeille. Restaurez-la avant de la modifier.",
       );
     const revs = (
       await rows("SELECT * FROM revisions WHERE session_id=? ORDER BY seq", id)
@@ -832,7 +822,7 @@ export async function handle(r: Request, path: string[]) {
         filename = reportPdfName(publicReport, seq);
       let bytes: Uint8Array;
       try {
-        bytes = await renderReportPdf(publicReport, context);
+        bytes = await (await import("./report-pdf")).renderReportPdf(publicReport, context);
         await env.BUCKET.put(storageKey, bytes, {
           httpMetadata: { contentType: "application/pdf" },
         });
@@ -951,7 +941,7 @@ export async function handle(r: Request, path: string[]) {
     }
   }
   if(route === "chapters" && r.method === "POST") {
-    await teacher(r);
+    requireTeacher(actor);
     const input=await body(r), template=chapterCatalogue.find(p=>p.id===input.templateId);
     if(!template) fail(400,"Choisissez une rubrique du programme.");
     const title=text(input.title || template.title,160).trim();
@@ -982,7 +972,7 @@ export async function handle(r: Request, path: string[]) {
     }
     if(!env.BUCKET) fail(503,"Le stockage des PDF n’est pas configuré.");
     if(!stored.storage_key) {
-      const bytes=await renderChapterPdf(parse(stored.payload)), key="chapter-reports/"+studentId+"/"+entry.id+"/"+uid()+".pdf";
+      const bytes=await (await import("./chapter-pdf")).renderChapterPdf(parse(stored.payload)), key="chapter-reports/"+studentId+"/"+entry.id+"/"+uid()+".pdf";
       await env.BUCKET.put(key,bytes,{httpMetadata:{contentType:"application/pdf"}});
       const updated=await db().prepare("UPDATE chapter_reports SET storage_key=?,size=?,sha256=? WHERE id=? AND storage_key IS NULL").bind(key,bytes.length,await hash(bytes.buffer as ArrayBuffer),entry.id).run();
       if(!updated.meta.changes) await env.BUCKET.delete(key);
@@ -993,7 +983,7 @@ export async function handle(r: Request, path: string[]) {
     return new Response(file.body,{headers:{"Content-Type":"application/pdf","Content-Disposition":"attachment; filename*=UTF-8''"+encodeURIComponent(entry.name+'.pdf'),"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}});
   }
   if (path[0] === "chapters" && path[1]) {
-    await teacher(r);
+    requireTeacher(actor);
     const id = path[1];
     if (
       !(await one(
@@ -1110,7 +1100,7 @@ export async function handle(r: Request, path: string[]) {
     }
   }
   if (route === "student" && r.method === "PUT") {
-    await teacher(r);
+    requireTeacher(actor);
     const input = await body(r);
     const name = text(input.name, 80).trim();
     if (!name) fail(400, "Indiquez le prénom de l’élève.");
@@ -1122,7 +1112,7 @@ export async function handle(r: Request, path: string[]) {
   }
   if (route === "grants" && r.method === "POST") {
     if(resolveAccount) fail(410, "Les liens sans compte sont désactivés.");
-    await teacher(r);
+    requireTeacher(actor);
     const input = await body(r);
     const token = [...crypto.getRandomValues(new Uint8Array(32))]
       .map((b) => b.toString(16).padStart(2, "0"))
@@ -1142,7 +1132,7 @@ export async function handle(r: Request, path: string[]) {
     return json({ url: new URL("/p/" + token, r.url).toString() });
   }
   if (path[0] === "grants" && path[1] && r.method === "DELETE") {
-    await teacher(r);
+    requireTeacher(actor);
     await db()
       .prepare("UPDATE grants SET revoked_at=? WHERE id=? AND student_id=?")
       .bind(now(), path[1], studentId)
@@ -1150,7 +1140,7 @@ export async function handle(r: Request, path: string[]) {
     return json({ ok: true });
   }
   if (route === "documents" && r.method === "POST") {
-    await teacher(r);
+    requireTeacher(actor);
     if (!env.BUCKET) fail(503, "Le stockage des PDF n’est pas configuré.");
     const length = Number(r.headers.get("content-length") || 0);
     if (length > 11 * 1024 * 1024)
@@ -1250,7 +1240,7 @@ export async function handle(r: Request, path: string[]) {
           revision.seq,
           revision.recorded_at,
         ),
-        bytes = await renderReportPdf(report, context),
+        bytes = await (await import("./report-pdf")).renderReportPdf(report, context),
         key =
           "report-pdfs/" + studentId + "/" + revision.id + "-" + uid() + ".pdf";
       await env.BUCKET.put(key, bytes, {
@@ -1326,7 +1316,7 @@ export async function handle(r: Request, path: string[]) {
     return json({ ok: true });
   }
   if (route === "trash" && r.method === "GET") {
-    await teacher(r);
+    requireTeacher(actor);
     const life = await lifecycle(),
       hiddenReports = hiddenResources(life, "report"),
       hiddenDocs = hiddenResources(life, "document");
@@ -1340,14 +1330,16 @@ export async function handle(r: Request, path: string[]) {
       )
     ).filter((d) => hiddenDocs.has(d.id));
     if (hiddenDocs.has(referenceDocument.id)) docs.unshift(referenceDocument);
-    return json({ reports, documents: docs });
+    const sessions = (await rows("SELECT id,date,status,draft FROM sessions WHERE student_id=? ORDER BY date DESC,id", studentId))
+      .filter(s => hiddenReports.has(s.id)).map(s => ({id:s.id,date:s.date,status:s.status,title:reports.find(r=>r.session_id===s.id)?.payload.title || (s.draft ? parse(s.draft).title : "") || "Séance"}));
+    return json({ reports, sessions, documents: docs });
   }
   if (
     (path[0] === "reports" || path[0] === "documents") &&
     path[1] &&
     (r.method === "DELETE" || (r.method === "POST" && path[2] === "restore"))
   ) {
-    await teacher(r);
+    requireTeacher(actor);
     const kind = path[0] === "reports" ? "report" : "document",
       id = path[1];
     const exists =
@@ -1420,7 +1412,7 @@ export async function handle(r: Request, path: string[]) {
         : {}),
     };
     if (path[1] === referenceDocument.id) {
-      const bytes = Uint8Array.from(atob(referencePdfBase64), (c) =>
+      const bytes = Uint8Array.from(atob((await import("./reference-pdf")).referencePdfBase64), (c) =>
         c.charCodeAt(0),
       );
       return new Response(bytes, { headers });
@@ -1430,7 +1422,7 @@ export async function handle(r: Request, path: string[]) {
     return new Response(object.body, { headers });
   }
   if (route === "export" && r.method === "GET") {
-    await teacher(r);
+    requireTeacher(actor);
     const data: any = {
       format: "orbite-export-v1",
       exportedAt: now(),

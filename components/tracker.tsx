@@ -394,7 +394,8 @@ export default function App() {
     [previewDoc, setPreviewDoc] = useState<AnyData>(null),
     [dialog, setDialog] = useState<AnyData>(null),
     [toast, setToast] = useState(""),
-    [pending, setPending] = useState(false);
+    [pending, setPending] = useState(false),
+    [refreshing, setRefreshing] = useState(false);
   const generation = useRef(0);
   const notify = (s: string) => {
     setToast(s);
@@ -403,23 +404,25 @@ export default function App() {
   const load = useCallback(async () => {
     const n = ++generation.current;
     setError("");
+    setRefreshing(true);
     try {
-      const c = await api("context");
+      const result = await api("workspace", "POST", { date });
+      const c = result.context;
       if (n !== generation.current) return;
       setContext(c);
       if (c.needsSetup) return;
-      if (c.role === "teacher") await api("prepare", "POST", { date });
-      const d = await api("data?date=" + date);
+      const d = result.data;
       if (n === generation.current) {
         setData(d);
         return d;
       }
     } catch (e) {
       if (n === generation.current) setError((e as Error).message);
+    } finally {
+      if (n === generation.current) setRefreshing(false);
     }
   }, [date]);
   useEffect(() => {
-    setData(null);
     load();
   }, [load]);
   async function act(fn: () => Promise<unknown>, message: string) {
@@ -574,7 +577,9 @@ export default function App() {
               </span>
             </div>
           </header>
-          <main id="main" className="main" tabIndex={-1}>
+          <main id="main" className="main" tabIndex={-1} aria-busy={refreshing}>
+            {data && refreshing && <div className="refresh-status" role="status">Actualisation…</div>}
+            {data && error && <div className="refresh-error" role="alert"><span>{error}</span><button className="text-button" onClick={load}>Réessayer</button></div>}
             {!data && (
               <>
                 {error ? (
@@ -633,13 +638,14 @@ export default function App() {
                   </div>
                   {teacher && tab === "chapters" && <button className="button" onClick={()=>setDialog({type:"chapter-new"})}><Icon name="plus"/>Ajouter un chapitre</button>}
                   {teacher && ["week", "history"].includes(tab) && (
+                    <div className="button-row session-management"><button className="button secondary" onClick={() => setDialog({type:"trash"})}><Icon name="trash"/>Corbeille</button>
                     <button
                       className="button"
                       onClick={() => setDialog({ type: "new" })}
                     >
                       <Icon name="plus" />
                       Ajouter une séance
-                    </button>
+                    </button></div>
                   )}
                 </div>
                 {tab === "week" && (
@@ -648,6 +654,7 @@ export default function App() {
                       <button
                         className="icon-button"
                         aria-label="Semaine précédente"
+                        disabled={refreshing}
                         onClick={() => setDate(addDays(data.week.monday, -7))}
                       >
                         <Icon name="left" />
@@ -670,6 +677,7 @@ export default function App() {
                       <button
                         className="icon-button"
                         aria-label="Semaine suivante"
+                        disabled={refreshing}
                         onClick={() => setDate(addDays(data.week.monday, 7))}
                       >
                         <Icon name="right" />
@@ -683,7 +691,7 @@ export default function App() {
                       )}
                       <button
                         className="button small secondary"
-                        disabled={data.week.monday === current.monday}
+                        disabled={refreshing || data.week.monday === current.monday}
                         onClick={() => setDate(todayParis())}
                       >
                         Cette semaine
@@ -827,14 +835,7 @@ export default function App() {
                                   teacher={teacher}
                                   onOpen={() => openSession(s)}
                                   onEdit={() => setSessionId(s.id)}
-                                  onDelete={() =>
-                                    remove(
-                                      "reports",
-                                      data.reports.find(
-                                        (r: AnyData) => r.session_id === s.id,
-                                      ),
-                                    )
-                                  }
+                                  onDelete={() => remove("sessions", s)}
                                 />
                               </footer>
                             </article>
@@ -919,7 +920,7 @@ export default function App() {
                     data={data}
                     onReport={setViewReport}
                     onEdit={(id: string) => setSessionId(id)}
-                    onDelete={(r: AnyData) => remove("reports", r)}
+                    onDelete={(r: AnyData) => remove("sessions", r)}
                     onTrash={() => setDialog({ type: "trash" })}
                   />
                 )}
@@ -1006,7 +1007,9 @@ export default function App() {
             close={() => setDialog(null)}
             act={act}
             onNewChapter={(id:string)=>{setChapterId(id);setDate(todayParis());setTab("chapters");}}
-            onNew={(id: string) => {
+            onNew={(id: string, createdDate: string) => {
+              setDate(createdDate);
+              setTab("week");
               setSessionId(id);
             }}
             notify={notify}
@@ -1172,7 +1175,7 @@ function History({data,onReport,onEdit,onDelete,onTrash}:AnyData) {
   const sessions=[...data.historySessions].filter((s:AnyData)=>(!chapter || s.chapterId===chapter)&&(!day || s.date===day)).sort((a:AnyData,b:AnyData)=>b.date.localeCompare(a.date)||a.id.localeCompare(b.id));
   const pages=Math.max(1,Math.ceil(sessions.length/10)),current=Math.min(page,pages),shown=sessions.slice((current-1)*10,current*10);
   return <section className="panel history-panel"><div className="filters history-filters"><label>Chapitre<select value={chapter} onChange={e=>{setChapter(e.target.value);setPage(1);}}><option value="">Tous les chapitres</option>{data.chapters.map((c:AnyData)=><option key={c.id} value={c.id}>{c.title}</option>)}</select></label><label>Date de la séance<input type="date" value={day} onChange={e=>{setDay(e.target.value);setPage(1);}}/></label>{day && <button className="text-button" onClick={()=>{setDay('');setPage(1);}}>Effacer la date</button>}{data.role==='teacher' && <button className="icon-button" aria-label="Ouvrir la corbeille" onClick={onTrash}><Icon name="trash"/></button>}</div>
-    {!sessions.length?<Empty title="Aucune séance dans cette sélection"/>:<div className="history-entries">{shown.map((s:AnyData)=><article className="history-entry" key={s.id}><div className="history-entry-heading"><time dateTime={s.date}>{dateLabel(s.date,{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</time><span className={"status "+(s.report?"published":s.status==='cancelled'?"cancelled":s.hasDraft?"draft":"planned")}>{s.report?'Publié':s.status==='cancelled'?'Annulée':s.hasDraft?'Brouillon':'À renseigner'}</span></div><div className="history-entry-main"><div><span className="chapter-label">{data.chapters.find((c:AnyData)=>c.id===s.chapterId)?.title}</span><h2>{s.report?.payload.title || 'Séance'}</h2></div><div className="button-row">{s.report?<><SessionFiles pdf={s.report.pdf} ids={s.report.payload.documentIds} documents={data.documents}/><button className="text-button" onClick={()=>onReport(s.report)}>Détails</button>{data.role==='teacher' && <><button className="button small secondary" onClick={()=>onEdit(s.id)}>Modifier</button><button className="icon-button danger-icon" aria-label={'Supprimer le bilan du '+dateLabel(s.date)} onClick={()=>onDelete(s.report)}><Icon name="trash"/></button></>}</>:data.role==='teacher' && <button className="button small secondary" onClick={()=>onEdit(s.id)}>Renseigner</button>}</div></div>{!s.report && <SessionFiles ids={s.supportIds || []} documents={data.documents}/>}</article>)}</div>}
+    {!sessions.length?<Empty title="Aucune séance dans cette sélection"/>:<div className="history-entries">{shown.map((s:AnyData)=><article className="history-entry" key={s.id}><div className="history-entry-heading"><time dateTime={s.date}>{dateLabel(s.date,{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</time><span className={"status "+(s.report?"published":s.status==='cancelled'?"cancelled":s.hasDraft?"draft":"planned")}>{s.report?'Publié':s.status==='cancelled'?'Annulée':s.hasDraft?'Brouillon':'À renseigner'}</span></div><div className="history-entry-main"><div><span className="chapter-label">{data.chapters.find((c:AnyData)=>c.id===s.chapterId)?.title}</span><h2>{s.report?.payload.title || 'Séance'}</h2></div><div className="button-row">{s.report?<><SessionFiles pdf={s.report.pdf} ids={s.report.payload.documentIds} documents={data.documents}/><button className="text-button" onClick={()=>onReport(s.report)}>Détails</button>{data.role==='teacher' && <><button className="button small secondary" onClick={()=>onEdit(s.id)}>Modifier</button><button className="icon-button danger-icon" aria-label={'Supprimer la séance du '+dateLabel(s.date)} onClick={()=>onDelete(s)}><Icon name="trash"/></button></>}</>:data.role==='teacher' && <><button className="button small secondary" onClick={()=>onEdit(s.id)}>Renseigner</button><button className="icon-button danger-icon" aria-label={'Supprimer la séance du '+dateLabel(s.date)} onClick={()=>onDelete(s)}><Icon name="trash"/></button></>}</div></div>{!s.report && <SessionFiles ids={s.supportIds || []} documents={data.documents}/>}</article>)}</div>}
     <nav className="pagination" aria-label="Pages de l’historique"><span>{sessions.length} séance{sessions.length!==1?'s':''}</span><div className="button-row"><button className="icon-button" disabled={current<=1} aria-label="Page précédente" onClick={()=>setPage(current-1)}><Icon name="left"/></button><span aria-live="polite">{current} / {pages}</span><button className="icon-button" disabled={current>=pages} aria-label="Page suivante" onClick={()=>setPage(current+1)}><Icon name="right"/></button></div></nav>
   </section>;
 }
@@ -2373,7 +2376,7 @@ function Dialogs({
   const [value, setValue] = useState(
       d.type === "rename" ? data.student.name : "",
     ),
-    [date, setDate] = useState(todayParis()),
+    [date, setDate] = useState(data.week.monday === isoWeek(todayParis()).monday ? todayParis() : data.week.monday),
     [chapter, setChapter] = useState(
       data.chapters.find((c: AnyData) => c.state === "active")?.id ||
         data.chapters[0].id,
@@ -2383,6 +2386,7 @@ function Dialogs({
     [link, setLink] = useState(""),
     [templateId,setTemplateId]=useState(data.catalogue?.find((p:AnyData)=>!data.chapters.some((c:AnyData)=>c.title===p.title))?.id || data.catalogue?.[0]?.id || ''),
     [startChapter,setStartChapter]=useState(true);
+  const requestKey = useRef(crypto.randomUUID());
   const template=data.catalogue?.find((p:AnyData)=>p.id===templateId);
   const titles: Record<string, string> = {
     new: "Ajouter une séance",
@@ -2398,7 +2402,7 @@ function Dialogs({
     grant: link ? "Lien de consultation créé" : "Créer un lien parent",
     revoke: "Révoquer le lien parent",
     remove:
-      d.kind === "reports" ? "Supprimer le bilan" : "Supprimer le document",
+      d.kind === "sessions" ? "Supprimer la séance" : d.kind === "reports" ? "Supprimer le bilan" : "Supprimer le document",
   };
   return (
     <Modal title={titles[d.type]} onClose={close} wide={d.type === "grid"}>
@@ -2411,8 +2415,9 @@ function Dialogs({
               const r = await api("sessions", "POST", {
                 date,
                 chapterId: chapter,
+                requestKey: requestKey.current,
               });
-              onNew(r.id);
+              onNew(r.id, date);
             }, "Séance ajoutée.");
           if(d.type === "chapter-new") act(async()=>{const result=await api('chapters','POST',{templateId,title:value || template?.title,start:startChapter,validated});onNewChapter(result.id);},'Chapitre ajouté.');
           if (d.type === "rename")
@@ -2481,13 +2486,13 @@ function Dialogs({
         {d.type === "remove" && (
           <>
             <h3>
-              {d.kind === "reports"
+              {d.kind === "sessions" ? dateLabel(d.resource.date, {weekday:"long",day:"numeric",month:"long",year:"numeric"}) : d.kind === "reports"
                 ? d.resource.payload.title
                 : d.resource.name}
             </h3>
             <p className="hint">
               L’élément sera masqué pour le parent.{" "}
-              {d.kind === "reports"
+              {["reports", "sessions"].includes(d.kind)
                 ? "Les statistiques du chapitre seront recalculées à partir des bilans restants."
                 : "Le fichier ne sera plus consultable depuis les bilans."}{" "}
               Vous pourrez le restaurer depuis la corbeille ; les données sont
@@ -2520,8 +2525,7 @@ function Dialogs({
               </select>
             </label>
             <p className="hint">
-              Séance exceptionnelle de deux heures, sans horaire. Elle reste
-              prévue tant que son bilan n’est pas publié.
+              La séance reste prévue jusqu’à la publication de son bilan.
             </p>
           </>
         )}
@@ -2851,7 +2855,7 @@ function TrashModal({ onClose, onChanged, notify }: AnyData) {
     <Modal title="Corbeille" onClose={onClose} wide>
       <div className="dialog-form">
         <p className="hint">
-          Les bilans et fichiers retirés restent conservés. Une restauration
+          Les séances et fichiers retirés restent conservés. Une restauration
           rend à nouveau les données publiées visibles au parent.
         </p>
         {error && (
@@ -2861,17 +2865,17 @@ function TrashModal({ onClose, onChanged, notify }: AnyData) {
         )}
         {!items ? (
           <p role="status">Chargement…</p>
-        ) : !items.reports.length && !items.documents.length ? (
+        ) : !items.sessions.length && !items.documents.length ? (
           <Empty title="La corbeille est vide" />
         ) : (
           <>
-            <h3>Bilans</h3>
-            {items.reports.map((r: AnyData) => (
+            <h3>Séances</h3>
+            {items.sessions.map((r: AnyData) => (
               <div className="trash-row" key={r.id}>
                 <div>
-                  <strong>{r.payload.title}</strong>
+                  <strong>{r.title}</strong>
                   <small>
-                    {dateLabel(r.payload.date, {
+                    {dateLabel(r.date, {
                       day: "numeric",
                       month: "long",
                       year: "numeric",
@@ -2881,7 +2885,7 @@ function TrashModal({ onClose, onChanged, notify }: AnyData) {
                 <button
                   className="button small secondary"
                   disabled={busy}
-                  onClick={() => restore("reports", r.session_id)}
+                  onClick={() => restore("sessions", r.id)}
                 >
                   Restaurer
                 </button>
@@ -3148,7 +3152,7 @@ function SessionActions({
             : "Renseigner la séance"
           : "En attente du bilan"}
         <Icon name="arrow" size={16} />
-      </button></div>
+      </button>{teacher && <button className="icon-button danger-icon" aria-label={"Supprimer la séance du " + dateLabel(s.date)} onClick={onDelete}><Icon name="trash" size={16}/></button>}</div>
     );
   return (
     <div className="published-actions">
@@ -3162,7 +3166,7 @@ function SessionActions({
             </button>
             <button
               className="icon-button danger-icon"
-              aria-label="Supprimer ce bilan"
+              aria-label={"Supprimer la séance du " + dateLabel(s.date)}
               onClick={onDelete}
             >
               <Icon name="trash" size={16} />
