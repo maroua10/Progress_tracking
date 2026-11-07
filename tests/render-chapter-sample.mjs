@@ -1,0 +1,12 @@
+import {build} from 'esbuild';
+import {mkdir,writeFile} from 'node:fs/promises';
+import {pathToFileURL} from 'node:url';
+import {resolve} from 'node:path';
+await mkdir('work/pdf-qa',{recursive:true});
+await build({stdin:{contents:"export {renderChapterPdf} from './lib/chapter-pdf';export {metrics} from './lib/domain';export {programme} from './lib/programme';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',outfile:'work/pdf-qa/chapter-renderer.mjs'});
+const {renderChapterPdf,metrics,programme}=await import(pathToFileURL(resolve('work/pdf-qa/chapter-renderer.mjs')));
+const p=programme.find(p=>p.id==='suites');
+const revs=[0,1,2].map((n)=>({id:'example-'+n,session_id:'example-'+n,seq:1,recorded_at:`2026-11-0${n+2}T16:00:00.000Z`,reason:'',payload:{date:`2026-11-0${n+2}`,title:'EXEMPLE FICTIF',skills:p.skills,gridId:'exemple',chapterId:p.id,documentIds:[],comment:'',partial:false,score:n===2?15:null,scale:n===2?20:null,assessmentTitle:'Contrôle - exemple fictif',assessmentMinutes:n===2?35:null,performances:[{id:'p'+n,title:'TD Exemple '+n,type:'td',score:5+2*n,scale:10,minutes:30-5*n}],activities:p.skills.slice(0,8+n).map((s,i)=>({id:String(i),skillId:s.id,type:'td',workRef:'TD Exemple '+n,exercises:String(i+1),level:[25,50,75,100][(i+n)%4],confirmed:(i+n)%4===3}))}}));
+const bytes=await renderChapterPdf({title:'EXEMPLE FICTIF - Suites numériques',studentName:'Élève exemple - données fictives',closedAt:'2026-11-06T18:00:00.000Z',grid:{skills:p.skills,source:{reference:'Programme de mathématiques - BO n° 14 du 2 avril 2026',version:'Rentrée 2026-2027'}},metrics:metrics(revs,p.skills),partial:false});
+await writeFile('work/pdf-qa/chapter-summary-example.pdf',bytes);
+console.log('PDF de vérification fictif créé.');

@@ -1,0 +1,11 @@
+.git
+.env*
+!.env.example
+.wrangler
+.sites-runtime
+.vinext
+dist
+work
+outputs
+tests
+examples
