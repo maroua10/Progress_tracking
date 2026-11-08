@@ -3620,3 +3620,6 @@ body,button,input,textarea,select,h1,h2,h3,h4,.hint,.muted,.report-comment,.repo
 .performance-result > summary { display:flex; justify-content:space-between; gap:14px; padding:16px 0; cursor:pointer; font-size:13px; }
 .performance-result > summary small { color:#000091; white-space:nowrap; }
 .performance-result .performance-form { margin:0 0 16px; }
+
+.pdf-fallback { padding: 24px; text-align: center; }
+.pdf-fallback .error { margin-bottom: 20px; text-align: left; }

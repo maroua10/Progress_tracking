@@ -1233,6 +1233,27 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
       assert.match(content,/Réussite observée sur les exercices travaillés/);assert.ok(!content.includes('Réussite autonome confirmée'));
       const revision=(await call('sessions/'+id)).data.revisions[0];assert.equal(revision.payload.activities[0].level,100);assert.equal(revision.payload.activities[0].confirmed,false);
     });
+    await t.test("une séance ancienne publiée plus tard reste visible, sans modifier les indicateurs historiques",async()=>{
+      const chapter=(await call('data')).data.chapters.find(c=>c.id==='suites');
+      const made=await call('sessions','POST',{date:'2026-10-03',chapterId:chapter.id}),id=made.data.id,editor=(await call('sessions/'+id)).data;
+      const report={...editor.draft,title:'TEST — bilan publié après sa semaine',documentIds:[pdfId],activities:[{id:'late-observation',skillId:chapter.grid.skills[0].id,type:'td',level:25,confirmed:false,workRef:'TEST TD historique',exercises:''}]};
+      let saved=await call('sessions/'+id+'/draft','PUT',{report,version:editor.session.version});
+      assert.equal((await call('sessions/'+id+'/publish','POST',{version:saved.data.version,requestKey:'late-week-publication'})).status,200);
+      for(const viewer of ['teacher',parentCookie]){
+        const data=(await call('data?date=2026-10-03','GET',null,viewer)).data;
+        const card=data.sessions.find(s=>s.id===id);assert.ok(card);assert.equal(card.status,'published');assert.equal(card.revision,1);assert.ok(card.pdf.url);
+        assert.equal(data.sessions.filter(s=>s.id===id).length,1);assert.equal(card.report.activities[0].level,25);
+        assert.ok(!data.reports.some(r=>r.session_id===id));assert.equal(data.chapters.find(c=>c.id===chapter.id).metrics.mastery,null);
+      }
+      const current=(await call('sessions/'+id)).data;
+      saved=await call('sessions/'+id+'/draft','PUT',{report:{...current.draft,activities:current.draft.activities.map(a=>({...a,level:75}))},version:current.session.version});
+      assert.equal((await call('sessions/'+id+'/update','POST',{version:saved.data.version,requestKey:'late-week-correction',reason:'TEST — correction historique'})).status,200);
+      const corrected=(await call('data?date=2026-10-03','GET',null,parentCookie)).data;
+      assert.equal(corrected.sessions.find(s=>s.id===id).revision,2);assert.equal(corrected.sessions.find(s=>s.id===id).report.activities[0].level,75);
+      assert.equal(corrected.chapters.find(c=>c.id===chapter.id).metrics.mastery,null);
+      const inline=await call('reports/'+id+'/pdf?view=1','GET',null,parentCookie);assert.equal(inline.status,200);assert.match(inline.response.headers.get('content-disposition'),/^inline;/);assert.match(inline.response.headers.get('cache-control'),/private, no-store/);
+      assert.equal((await call('reports/'+id+'/pdf?view=1','GET',null,null)).status,401);
+    });
   } finally {
     await mf.dispose();
   }

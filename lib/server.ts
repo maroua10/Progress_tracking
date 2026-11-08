@@ -445,10 +445,12 @@ async function loadWorkspaceData(actor: Awaited<ReturnType<typeof identity>>, da
         ),
       };
     });
+    // Cards show the available published report, even if publication happened
+    // after that week. Chapter indicators above retain their historical cutoff.
     const weekSessions = scheduled
       .filter((s) => {
         if (hiddenReports.has(s.id)) return false;
-        const pub = published.find((p) => p.session_id === s.id);
+        const pub = historyReports.find((p) => p.session_id === s.id);
         return (
           !all.some((p) => p.session_id === s.id) ||
           (!!pub &&
@@ -457,7 +459,7 @@ async function loadWorkspaceData(actor: Awaited<ReturnType<typeof identity>>, da
         );
       })
       .map((s) => {
-        const pub = published.find((p) => p.session_id === s.id);
+        const pub = historyReports.find((p) => p.session_id === s.id);
         return {
           id: s.id,
           date: s.date,
@@ -480,7 +482,7 @@ async function loadWorkspaceData(actor: Awaited<ReturnType<typeof identity>>, da
           ...(actor.role === "teacher" ? { version: s.version } : {}),
         };
       });
-    for (const pub of published.filter(
+    for (const pub of historyReports.filter(
       (x) => x.payload.date >= week.monday && x.payload.date <= week.sunday,
     )) {
       if (!weekSessions.some((s) => s.id === pub.session_id))
@@ -1310,11 +1312,13 @@ export async function handle(r: Request, path: string[]) {
       fail(410, "Ce bilan est dans la corbeille.");
     const object = await env.BUCKET.get(record.storage_key);
     if (!object) fail(404, "Le PDF de ce bilan est indisponible.");
+    const inline = query.get("view") === "1";
     return new Response(object.body, {
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition":
-          "attachment; filename*=UTF-8''" + encodeURIComponent(record.name),
+          (inline ? "inline" : "attachment") + "; filename*=UTF-8''" + encodeURIComponent(record.name),
+        ...(inline ? {"Content-Security-Policy":"sandbox; frame-ancestors 'self'"} : {}),
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "no-referrer",

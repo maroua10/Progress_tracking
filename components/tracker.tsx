@@ -1,4 +1,5 @@
 "use client";
+import {installPdfCompatibility} from "../lib/pdf-compatibility.mjs";
 import ActivityEditor from "./activity-editor";
 import SkillQuickAdd from "./skill-quick-add";
 import {activityBundles,replaceActivityBundle} from "../lib/domain";
@@ -2713,6 +2714,8 @@ function PdfPreview({ doc, onClose, onEdit, onViewed }: AnyData) {
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [pageText, setPageText] = useState("");
+  const fileUrl = doc.url || "/api/documents/" + doc.id;
+  const directUrl = fileUrl + (fileUrl.includes("?") ? "&" : "?") + "view=1";
   const host = useRef<HTMLDivElement>(null),
     canvas = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -2736,8 +2739,10 @@ function PdfPreview({ doc, onClose, onEdit, onViewed }: AnyData) {
       try {
         setLoading(true);
         setError("");
+        setPdf(null);
+        installPdfCompatibility();
         const [lib, response] = await Promise.all([
-          import("pdfjs-dist"),
+          import("pdfjs-dist/legacy/build/pdf.mjs"),
           fetch(doc.url || "/api/documents/" + doc.id, {
             signal: controller.signal,
             credentials: "same-origin",
@@ -2750,7 +2755,7 @@ function PdfPreview({ doc, onClose, onEdit, onViewed }: AnyData) {
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (stopped) return;
         lib.GlobalWorkerOptions.workerSrc =
-          "/pdf-viewer/pdf.worker-6.5.438.min.mjs";
+          "/pdf-viewer/pdf.worker-legacy-6.5.438.min.mjs";
         task = lib.getDocument({
           data: bytes,
           enableXfa: false,
@@ -2768,7 +2773,7 @@ function PdfPreview({ doc, onClose, onEdit, onViewed }: AnyData) {
         setPage(Math.max(1, Math.min(doc.page || 1, document.numPages)));
       } catch (e) {
         if (!stopped) {
-          setError((e as Error).message);
+          setError("L’aperçu intégré est indisponible. Vous pouvez ouvrir le PDF directement.");
           setLoading(false);
         }
       }
@@ -2840,6 +2845,7 @@ function PdfPreview({ doc, onClose, onEdit, onViewed }: AnyData) {
       wide
     >
       <div className="pdf-toolbar">
+        <a className="text-button" href={directUrl} target="_blank" rel="noreferrer">Ouvrir directement</a>
         <div className="button-row">
           <button
             className="icon-button"
@@ -2887,9 +2893,7 @@ function PdfPreview({ doc, onClose, onEdit, onViewed }: AnyData) {
       </div>
       <div className="pdf-stage" ref={host}>
         {error ? (
-          <p className="error" role="alert">
-            {error}
-          </p>
+          <div className="pdf-fallback"><p className="error" role="alert">{error}</p><a className="button secondary" href={directUrl} target="_blank" rel="noreferrer">Ouvrir le PDF directement</a></div>
         ) : (
           <>
             {loading && (
