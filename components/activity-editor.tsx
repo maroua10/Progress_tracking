@@ -355,26 +355,6 @@ function ActivityCard({
                 <p className="level-explanation">
                   {levelLabels[a.level === null ? "none" : a.level]}
                 </p>
-                {a.level === 100 && (
-                  <label className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={a.confirmed}
-                      disabled={busy}
-                      onChange={(e) =>
-                        update(
-                          bundle.activities.map((row) =>
-                            row.id === a.id
-                              ? { ...row, confirmed: e.target.checked }
-                              : row,
-                          ),
-                        )
-                      }
-                    />
-                    Je confirme une réussite autonome sur un autre exercice ou
-                    une autre séance.
-                  </label>
-                )}
               </div>
             ))}
         </details>

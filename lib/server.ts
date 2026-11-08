@@ -173,11 +173,6 @@ async function reportInput(input: any, publishing = false) {
       fail(400, "Choisissez un type de travail.");
     if (a.level !== null && ![0, 25, 50, 75, 100].includes(a.level))
       fail(400, "Le niveau de maîtrise est invalide.");
-    if (publishing && a.level === 100 && a.confirmed !== true)
-      fail(
-        400,
-        "Confirmez explicitement la réussite autonome sur un autre exercice ou une autre séance.",
-      );
     return {
       id: text(a.id, 100),
       skillId: a.skillId,

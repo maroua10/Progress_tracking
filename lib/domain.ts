@@ -238,7 +238,7 @@ export const levelLabels: Record<string, string> = {
   "25": "Réussit avec un guidage important",
   "50": "Réussit avec quelques aides",
   "75": "Réussit seul un exercice classique",
-  "100": "Réussite autonome confirmée",
+  "100": "Réussite observée sur les exercices travaillés",
 };
 
 export type ResourceEvent = {

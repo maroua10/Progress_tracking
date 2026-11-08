@@ -287,32 +287,6 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
         session.version = saved.data.version;
       },
     );
-    await t.test("100 % exige confirmation côté serveur", async () => {
-      const invalid = {
-        ...report,
-        activities: [{ ...report.activities[0], level: 100, confirmed: false }],
-      };
-      const saved = await call("sessions/" + session.id + "/draft", "PUT", {
-        report: invalid,
-        version: session.version,
-      });
-      assert.equal(saved.status, 200);
-      session.version = saved.data.version;
-      assert.equal(
-        (
-          await call("sessions/" + session.id + "/publish", "POST", {
-            version: session.version,
-            requestKey: "invalid-100",
-          })
-        ).status,
-        400,
-      );
-      const restored = await call("sessions/" + session.id + "/draft", "PUT", {
-        report,
-        version: session.version,
-      });
-      session.version = restored.data.version;
-    });
     await t.test(
       "publication idempotente et non évalué distinct de 0",
       async () => {
@@ -1245,6 +1219,19 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
       assert.equal(after.historyReports.find(r=>r.session_id===id).payload.activities.length,3);
       const pdf=await call('reports/'+id+'/pdf','GET',null,parentCookie);assert.equal(pdf.status,200);
       assert.match(await pdfText(new Uint8Array(await pdf.response.arrayBuffer())),/TEST/);
+    });
+    await t.test("100 % se publie sans confirmation d’autonomie, avec un libellé factuel",async()=>{
+      const chapter=(await call('data')).data.chapters.find(c=>c.id==='suites');
+      const made=await call('sessions','POST',{date:today(),chapterId:chapter.id}),id=made.data.id,editor=(await call('sessions/'+id)).data;
+      const report={...editor.draft,title:'TEST — réussite observée à 100 %',activities:[{id:'observed-100',skillId:chapter.grid.skills[0].id,type:'td',level:100,confirmed:false,workRef:'TD test réussite observée',exercises:''}]};
+      const saved=await call('sessions/'+id+'/draft','PUT',{report,version:editor.session.version});assert.equal(saved.status,200);
+      const input={version:saved.data.version,requestKey:'publish-observed-100'};
+      const published=await call('sessions/'+id+'/publish','POST',input);assert.equal(published.status,200,JSON.stringify(published.data));
+      assert.equal((await call('sessions/'+id+'/publish','POST',input)).status,200);
+      const pdf=await call('reports/'+id+'/pdf','GET',null,parentCookie);assert.equal(pdf.status,200);
+      const content=await pdfText(new Uint8Array(await pdf.response.arrayBuffer()));
+      assert.match(content,/Réussite observée sur les exercices travaillés/);assert.ok(!content.includes('Réussite autonome confirmée'));
+      const revision=(await call('sessions/'+id)).data.revisions[0];assert.equal(revision.payload.activities[0].level,100);assert.equal(revision.payload.activities[0].confirmed,false);
     });
   } finally {
     await mf.dispose();
