@@ -118,6 +118,8 @@ function ActivityCard({
             skillId: id,
             level: null,
             confirmed: false,
+            estimated: false,
+            evidence: "",
           });
     if (!members.length)
       members = [
@@ -342,7 +344,7 @@ function ActivityCard({
                         update(
                           bundle.activities.map((row) =>
                             row.id === a.id
-                              ? { ...row, level, confirmed: false }
+                              ? { ...row, level, confirmed: false, estimated:false }
                               : row,
                           ),
                         )
@@ -353,8 +355,10 @@ function ActivityCard({
                   ))}
                 </div>
                 <p className="level-explanation">
-                  {levelLabels[a.level === null ? "none" : a.level]}
+                  {a.estimated && a.level !== null ? "Estimation d’après la copie" : levelLabels[a.level === null ? "none" : a.level]}
                 </p>
+                {a.evidence && <p className="hint">{a.evidence}</p>}
+                {a.level !== null && <label className="checkbox-label"><input type="checkbox" checked={a.estimated === true} disabled={busy} onChange={e=>update(bundle.activities.map(row=>row.id===a.id?{...row,estimated:e.target.checked}:row))}/>Niveau estimé à partir du support</label>}
               </div>
             ))}
         </details>

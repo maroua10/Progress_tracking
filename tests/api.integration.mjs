@@ -1254,6 +1254,24 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
       const inline=await call('reports/'+id+'/pdf?view=1','GET',null,parentCookie);assert.equal(inline.status,200);assert.match(inline.response.headers.get('content-disposition'),/^inline;/);assert.match(inline.response.headers.get('cache-control'),/private, no-store/);
       assert.equal((await call('reports/'+id+'/pdf?view=1','GET',null,null)).status,401);
     });
+    await t.test("synthèse et estimations : brouillon privé, publication factuelle et correction conservée",async()=>{
+      const chapter=(await call('data')).data.chapters.find(c=>c.id==='suites');
+      const made=await call('sessions','POST',{date:today(),chapterId:chapter.id}),id=made.data.id,editor=(await call('sessions/'+id)).data;
+      const summary={objective:'TEST objectif clair',strengths:'TEST réussite visible',focus:'TEST signes à reprendre',nextStep:'TEST vérifier les racines'};
+      const report={...editor.draft,title:'TEST bilan synthétique',summary,privateNote:'TEST SECRET PROF',activities:[{id:'estimated',skillId:chapter.grid.skills[0].id,type:'td',level:75,estimated:true,evidence:'TEST correction visible sans note globale',confirmed:false,workRef:'TD synthèse',exercises:''}]};
+      assert.equal((await call('sessions/'+id+'/draft','PUT',{report:{...report,summary:[]},version:editor.session.version})).status,400);
+      const saved=await call('sessions/'+id+'/draft','PUT',{report,version:editor.session.version});assert.equal(saved.status,200);
+      const loaded=(await call('sessions/'+id)).data;assert.deepEqual(loaded.draft.summary,summary);assert.equal(loaded.draft.activities[0].estimated,true);
+      assert.ok(!(await call('data','GET',null,parentCookie)).data.historyReports.some(r=>r.session_id===id));
+      assert.equal((await call('sessions/'+id+'/publish','POST',{version:saved.data.version,requestKey:'publish-synthesis'})).status,200);
+      const parent=(await call('data','GET',null,parentCookie)).data.historyReports.find(r=>r.session_id===id);assert.deepEqual(parent.payload.summary,summary);assert.equal(parent.payload.privateNote,undefined);
+      const pdf=await call('reports/'+id+'/pdf','GET',null,parentCookie);const bytes=new Uint8Array(await pdf.response.arrayBuffer());const text=await pdfText(bytes);
+      for(const value of Object.values(summary))assert.ok(text.includes(value));assert.ok(text.includes('estimation d’après la copie'));assert.ok(text.includes(report.activities[0].evidence));assert.ok(!text.includes('TEST SECRET PROF'));assert.ok(!text.includes('Durée : 2 h'));assert.ok(!text.includes('autonome confirmée'));
+      const edit=(await call('sessions/'+id)).data;const save=await call('sessions/'+id+'/draft','PUT',{report:{...edit.draft,summary:{...summary,focus:'TEST nouvelle précision'}},version:edit.session.version});
+      assert.equal((await call('sessions/'+id+'/update','POST',{version:save.data.version,requestKey:'correct-synthesis',reason:'TEST précision'})).status,200);
+      const historical=await call('reports/'+id+'/pdf?revision=1','GET',null,parentCookie);assert.deepEqual(new Uint8Array(await historical.response.arrayBuffer()),bytes);
+      const versions=(await call('sessions/'+id)).data.revisions;assert.equal(versions.length,2);assert.equal(versions[0].payload.summary.focus,summary.focus);assert.equal(versions[1].payload.summary.focus,'TEST nouvelle précision');
+    });
   } finally {
     await mf.dispose();
   }

@@ -1,6 +1,7 @@
 "use client";
 import {installPdfCompatibility} from "../lib/pdf-compatibility.mjs";
 import ActivityEditor from "./activity-editor";
+import ReportOverview from "./report-overview";
 import SkillQuickAdd from "./skill-quick-add";
 import {activityBundles,replaceActivityBundle} from "../lib/domain";
 import ParentAccounts from "../components/parent-accounts";
@@ -1549,6 +1550,8 @@ function SessionEditor({
           id: crypto.randomUUID(),
           level: null,
           confirmed: false,
+          estimated: false,
+          evidence: "",
           exercises: "",
         })),
       documentIds: prior.payload.documentIds,
@@ -1802,6 +1805,10 @@ function SessionEditor({
               <button type="button" className="button secondary" onClick={()=>patch({performances:[...(draft.performances || []),{id:crypto.randomUUID(),title:"Résultat "+((draft.performances?.length || 0)+1),type:"td",score:null,scale:null,minutes:null,...(activityBundles(draft.activities).filter(b=>b.type==="td").length===1?{workId:activityBundles(draft.activities).find(b=>b.type==="td")!.activities[0].workId}:{})}]})}>Ajouter un résultat ou un temps</button>
             </details>
             {draft.documentIds.some(docId=>!draft.activities.some(a=>a.documentIds?.includes(docId))) && <div className="editor-section"><h3>Autres supports du bilan</h3><div className="attachment-list">{draft.documentIds.filter(docId=>!draft.activities.some(a=>a.documentIds?.includes(docId))).map(docId=><div key={docId}><a href={"/api/documents/"+docId}>{loaded.documents.find((d:AnyData)=>d.id===docId)?.name || "Support PDF"}</a><button type="button" className="text-button" onClick={()=>patch({documentIds:draft.documentIds.filter(id=>id!==docId)})}>Retirer</button></div>)}</div></div>}
+            <details className="form-details" open={!!draft.summary && Object.values(draft.summary).some(Boolean) || undefined}>
+              <summary>Synthèse pour le parent <span>facultatif</span></summary>
+              <div className="synthesis-form">{([["objective","Objectif de la séance"],["strengths","Points réussis"],["focus","À consolider"],["nextStep","Prochaine étape"]] as const).map(([key,label])=><label key={key}>{label}<textarea rows={2} maxLength={1200} value={draft.summary?.[key] || ""} onChange={e=>patch({summary:{objective:"",strengths:"",focus:"",nextStep:"",...draft.summary,[key]:e.target.value}})}/></label>)}</div>
+            </details>
             <label className="editor-section">
               Commentaire destiné au parent{" "}
               <span className="optional">facultatif</span>
@@ -1813,6 +1820,7 @@ function SessionEditor({
                 placeholder="Un complément factuel sur la séance."
               />
             </label>
+            <details className="form-details"><summary>Aperçu du bilan pour le parent</summary><ReportOverview report={draft}/>{draft.comment && <section className="report-comment"><h3>Commentaire</h3><p>{draft.comment}</p></section>}</details>
             <label>
               Note privée du professeur{" "}
               <span className="optional">jamais visible par le parent</span>
@@ -1967,13 +1975,6 @@ function ReportView({
     .sort((a: AnyData, b: AnyData) => a.seq - b.seq);
   const [shown, setShown] = useState(r);
   const report = shown.payload;
-  const workedCount = new Set(report.activities.map((a: Activity) => a.skillId))
-    .size;
-  const evaluatedCount = new Set(
-    report.activities
-      .filter((a: Activity) => a.level !== null)
-      .map((a: Activity) => a.skillId),
-  ).size;
   useEffect(() => {
     api("reports/" + r.session_id + "/view", "POST", { seq: r.seq })
       .then(() => onViewed?.(r.session_id, r.seq))
@@ -1995,7 +1996,7 @@ function ReportView({
     >
       <div className="report-detail report-sheet">
         <div className="sheet-label">
-          <span>ORBITE · MATHÉMATIQUES</span>
+          <span>REPÈRE · MATHÉMATIQUES</span>
           <span>{data.student.name}</span>
         </div>
         <div className="report-title-line">
@@ -2016,39 +2017,7 @@ function ReportView({
             informations connues.
           </p>
         )}
-        <div className="fact-banner">
-          <strong>
-            {workedCount} notion{workedCount > 1 ? "s" : ""} travaillée
-            {workedCount > 1 ? "s" : ""}
-          </strong>
-          <p>
-            {evaluatedCount} notion{evaluatedCount > 1 ? "s" : ""} évaluée
-            {evaluatedCount > 1 ? "s" : ""} ce jour-là. Les niveaux ci-dessous
-            sont ceux observés pendant cette séance.
-          </p>
-        </div>
-        <div className="report-activities">
-          {report.activities.map((a: Activity, i: number) => (
-            <div className="report-activity" key={a.id}>
-              <span className="skill-index">
-                {String(i + 1).padStart(2, "0")}
-              </span>
-              <div>
-                <span className="chapter-label">{workLabel[a.type]}</span>
-                <h3>
-                  {report.skills.find((s: Skill) => s.id === a.skillId)
-                    ?.label || a.skillId}
-                </h3>
-                {!a.workId && a.workRef && <p>Support : {a.workRef}</p>}
-                {a.exercises && <p>Exercices : {a.exercises}</p>}
-                <p className="hint">
-                  {levelLabels[a.level === null ? "none" : a.level]}
-                </p>
-              </div>
-              <Mastery value={a.level} />
-            </div>
-          ))}
-        </div>
+        <ReportOverview report={report} />
         {report.score !== null && (
           <div className="evaluation-result">
             <div>

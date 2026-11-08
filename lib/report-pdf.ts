@@ -1,4 +1,4 @@
-import { PDFDocument, rgb, degrees, type PDFPage, type PDFFont } from "pdf-lib";
+import { PDFDocument, rgb, type PDFPage, type PDFFont } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import {
   reportRegularFont,
@@ -6,7 +6,7 @@ import {
   reportCompactRegularFont,
   reportCompactBoldFont,
 } from "./report-fonts";
-import { levelLabels, type Report, type Activity } from "./domain";
+import { reportTopics, type Report } from "./domain";
 export { REPORT_PDF_TEMPLATE, reportPdfName } from "./report-metadata";
 export type PdfContext = {
   studentName: string;
@@ -63,6 +63,9 @@ export async function renderReportPdf(
     context.studentName,
     context.chapterTitle,
     report.comment,
+    ...Object.values(report.summary || {}),
+    ...report.activities.map(a=>a.evidence || ""),
+    ...report.skills.map(s=>s.group || ""),
     report.assessmentTitle,
     ...report.activities.flatMap((a) => [
       report.skills.find((s) => s.id === a.skillId)?.label || a.skillId,
@@ -188,7 +191,7 @@ export async function renderReportPdf(
     const size = opts.size ?? 10,
       font = opts.strong ? bold : regular,
       indent = opts.indent ?? 0,
-      leading = opts.leading ?? size * 1.48;
+      leading = opts.leading ?? size * 1.35;
     for (const line of lines(text, font, size, CW - indent)) {
       ensure(leading);
       if (line)
@@ -204,105 +207,41 @@ export async function renderReportPdf(
     y -= opts.gap ?? 0;
   }
   function section(title: string) {
-    ensure(46);
-    y -= 8;
-    write(title, { size: 10, strong: true, color: colors.teal, gap: 5 });
+    ensure(32);
+    y -= 4;
+    write(title, { size: 9, strong: true, color: colors.teal, gap: 3 });
     page.drawLine({
       start: { x: M, y: y + 1 },
       end: { x: W - M, y: y + 1 },
       color: colors.line,
       thickness: 0.6,
     });
-    y -= 12;
+    y -= 8;
   }
   addPage();
-  write("BILAN DE SÉANCE", {
-    size: 8,
-    strong: true,
-    color: colors.teal,
-    gap: 9,
-  });
+  write("BILAN DE SÉANCE", {size:8,strong:true,color:colors.teal,gap:5});
   const date = frenchDate(report.date, true);
-  write(date.charAt(0).toUpperCase() + date.slice(1), {
-    size: 10,
-    color: colors.muted,
-    gap: 8,
-  });
-  write(report.title, { size: 21, strong: true, leading: 27, gap: 12 });
-  write("Élève : " + context.studentName, { size: 10, gap: 3 });
-  write("Chapitre : " + context.chapterTitle, {
-    size: 11,
-    strong: true,
-    gap: 4,
-  });
-  write("Mathématiques - Durée : 2 h", {
-    size: 8.5,
-    color: colors.muted,
-    gap: 15,
-  });
-  const worked = new Set(report.activities.map((a) => a.skillId)).size,
-    evaluated = new Set(
-      report.activities.filter((a) => a.level !== null).map((a) => a.skillId),
-    ).size;
-  ensure(39);
-  page.drawRectangle({
-    x: M,
-    y: y - 32,
-    width: CW,
-    height: 32,
-    color: colors.wash,
-  });
-  page.drawText(
-    `${worked} notion${worked > 1 ? "s" : ""} travaillée${worked > 1 ? "s" : ""}   /   ${evaluated} notion${evaluated > 1 ? "s" : ""} évaluée${evaluated > 1 ? "s" : ""}`,
-    { x: M + 12, y: y - 20, font: regular, size: 9, color: colors.ink },
-  );
-  y -= 43;
-  if (report.partial)
-    write(
-      "Reprise d’historique partiel : seules les informations connues sont renseignées.",
-      { size: 9, color: colors.muted, gap: 6 },
-    );
-  section("Notions et activités");
-  const groups = new Map<string, Activity[]>();
-  for (const a of report.activities)
-    groups.set(a.skillId, [...(groups.get(a.skillId) || []), a]);
-  let index = 0;
-  for (const [skillId, activities] of groups) {
-    ensure(70);
-    const skill = report.skills.find((s) => s.id === skillId);
-    write(`${String(++index).padStart(2, "0")}  ${skill?.label || skillId}`, {
-      size: 10.5,
-      strong: true,
-      leading: 15,
-      gap: 6,
-    });
-    for (const a of activities) {
-      const type = { cours: "Cours", td: "TD", evaluation: "Évaluation" }[
-        a.type
-      ];
-      write(
-        `${type} - ${a.level === null ? "Non évaluée" : a.level + " % de maîtrise observée"}`,
-        {
-          size: 9.5,
-          indent: 16,
-          color: a.level === 100 ? colors.green : colors.ink,
-          gap: 3,
-        },
-      );
-      if (a.level !== null)
-        write(levelLabels[String(a.level)], {
-          size: 8.5,
-          indent: 16,
-          color: colors.muted,
-          gap: 3,
-        });
-      if (!a.workId && a.workRef)
-        write("Support : " + a.workRef, { size: 9, indent: 16, gap: 2 });
-      if (a.exercises)
-        write("Exercices : " + a.exercises, { size: 9, indent: 16, gap: 3 });
-      y -= 6;
+  write(date.charAt(0).toUpperCase() + date.slice(1), {size:9,color:colors.muted,gap:6});
+  write(report.title, {size:19,strong:true,leading:24,gap:8});
+  write(context.studentName + "  /  " + context.chapterTitle, {size:9,strong:true,gap:14});
+  if (report.summary) {
+    for (const [key, title] of [["objective","Objectif"],["strengths","Points réussis"],["focus","À consolider"],["nextStep","Prochaine étape"]] as const) {
+      if (!report.summary[key]?.trim()) continue;
+      ensure(52);
+      write(title.toUpperCase(), {size:7,strong:true,color:key === "strengths" ? colors.green : colors.teal,gap:2});
+      write(report.summary[key], {size:8.7,leading:12,gap:7});
     }
-    y -= 5;
+  }
+  if (report.comment.trim()) {
+    section(report.summary ? "Repères de lecture" : "Synthèse du professeur");
+    write(report.comment, {size:8.5,leading:12,gap:6});
+  }
+  section("Objectifs travaillés");
+  const topics = reportTopics(report);
+  for (const topic of topics) {
+    ensure(56);
+    write(topic.title, {size:9,strong:true,gap:2});
+    write(topic.level === null ? "Travaillé - non évalué" : `${topic.level} % - ${topic.evaluated > 1 ? "moyenne de " : ""}${topic.evaluated} notion${topic.evaluated>1?"s":""} évaluée${topic.evaluated>1?"s":""} sur ${topic.items.length}${topic.estimated ? " (estimation)" : ""}`, {size:8.5,color:topic.level===100?colors.green:colors.muted,gap:6});
   }
   if (report.score !== null && report.scale !== null) {
     section("Résultat d’évaluation");
@@ -319,13 +258,10 @@ export async function renderReportPdf(
   if (report.performances?.length) {
     section("Résultats et temps mesurés");
     for (const p of report.performances) {
-      write(p.title, {size:10,strong:true,gap:4});
-      write((p.type === "td" ? "TD" : p.type === "evaluation" ? "Évaluation" : "Exercice") + (p.score !== null ? ` - Note : ${p.score} / ${p.scale}` : "") + (p.minutes !== null ? ` - Temps : ${p.minutes} min` : ""), {size:9,gap:8});
+      ensure(32);
+      write(p.title, {size:8.5,strong:true,gap:1});
+      write((p.type === "td" ? "TD" : p.type === "evaluation" ? "Évaluation" : "Exercice") + (p.score !== null ? ` - Note : ${p.score} / ${p.scale}` : "") + (p.minutes !== null ? ` - Temps : ${p.minutes} min` : ""), {size:8,gap:6});
     }
-  }
-  if (report.comment.trim()) {
-    section("Commentaire du professeur");
-    write(report.comment, { size: 10, leading: 15, gap: 8 });
   }
   const attachments = context.documents.filter((d) =>
     report.documentIds.includes(d.id),
@@ -337,6 +273,26 @@ export async function renderReportPdf(
       color: colors.muted,
       gap: 4,
     });
+  }
+  if (topics.length) {
+    addPage();
+    section("Détail des compétences de la séance");
+    write("Les niveaux ci-dessous concernent cette séance. Une estimation d’après la copie ne renseigne pas le degré d’aide reçu.", {size:8,color:colors.muted,gap:12});
+    for (const topic of topics) {
+      ensure(46);
+      write(topic.title, {size:9,strong:true,color:colors.teal,gap:8});
+      for (const {skill} of topic.items) {
+        for (const a of report.activities.filter(a=>a.skillId===skill.id)) {
+        ensure(42);
+        write(skill.label, {size:8.5,strong:true,gap:1});
+        write(a.level === null ? "Non évaluée" : `${a.level} %${a.estimated ? " - estimation d’après la copie" : a.level===100 ? " - Réussite observée sur les exercices travaillés" : ""}`, {size:8.5,color:a.level===100?colors.green:colors.lavender,gap:1});
+        if (a.workRef) write("Support : " + a.workRef, {size:8,color:colors.muted,gap:3});
+        if (a.evidence) write(a.evidence, {size:8,color:colors.muted,gap:3});
+        if (a.exercises) write("Exercices : " + a.exercises, {size:8,color:colors.muted,gap:3});
+        y -= 4;
+        }
+      }
+    }
   }
   const pages = pdf.getPages();
   for (let i = 0; i < pages.length; i++) {

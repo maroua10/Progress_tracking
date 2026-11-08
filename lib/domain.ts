@@ -17,6 +17,8 @@ export type Activity = {
   exercises: string;
   workId?: string;
   documentIds?: string[];
+  estimated?: boolean;
+  evidence?: string;
 };
 // One activity may cover several notions; observations remain separate for history.
 export function activityBundles(activities: Activity[]) {
@@ -50,7 +52,30 @@ export type Report = {
   privateNote?: string;
   studentName?: string;
   chapterTitle?: string;
+  summary?: { objective: string; strengths: string; focus: string; nextStep: string };
 };
+
+// Summaries use only this session's observations, never the chapter's current levels.
+export function reportTopics(report: Report) {
+  const observations = new Map<string, Activity>();
+  for (const a of report.activities) {
+    const previous = observations.get(a.skillId);
+    if (!previous || a.level !== null) observations.set(a.skillId, a);
+  }
+  const groups = new Map<string, {skill: Skill; activity: Activity}[]>();
+  for (const [id, activity] of observations) {
+    const skill = report.skills.find(s => s.id === id);
+    if (!skill) continue;
+    const group = skill.group || "Compétences travaillées";
+    groups.set(group, [...(groups.get(group) || []), {skill, activity}]);
+  }
+  return [...groups].map(([title, items]) => {
+    const measured = items.filter(i => i.activity.level !== null);
+    const total = measured.reduce((n, i) => n + (i.skill.weight || 1), 0);
+    return {title, items, evaluated: measured.length, estimated: measured.some(i=>i.activity.estimated),
+      level: total ? Math.round(measured.reduce((n,i)=>n+i.activity.level!*(i.skill.weight || 1),0)/total) : null};
+  });
+}
 export type Revision = {
   id: string;
   session_id: string;

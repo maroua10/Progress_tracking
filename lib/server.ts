@@ -161,6 +161,7 @@ async function allRevisions() {
 async function reportInput(input: any, publishing = false) {
   if (!input || !validDate(input.date)) fail(400, "Indiquez une date valide.");
   const grid = await gridFor(text(input.gridId, 100));
+  if (input.summary !== undefined && (!input.summary || typeof input.summary !== "object" || Array.isArray(input.summary))) fail(400,"La synthèse du bilan est invalide.");
   if (grid.chapter_id !== input.chapterId)
     fail(400, "La grille ne correspond pas au chapitre.");
   const skills = grid.skills as Skill[];
@@ -179,6 +180,8 @@ async function reportInput(input: any, publishing = false) {
       type: a.type,
       level: a.level,
       confirmed: a.level === 100 && a.confirmed === true,
+      ...(a.estimated === true ? {estimated:true} : {}),
+      ...(a.evidence ? {evidence:text(a.evidence,1000).trim()} : {}),
       workRef: text(a.workRef || "", 200).trim(),
       exercises: text(a.exercises || "", 2000),
       ...(a.workId ? {workId: text(a.workId,100)} : {}),
@@ -246,6 +249,7 @@ async function reportInput(input: any, publishing = false) {
     activities,
     documentIds,
     comment: text(input.comment || ""),
+    ...(input.summary ? {summary:Object.fromEntries(["objective","strengths","focus","nextStep"].map(key=>[key,text(input.summary[key] || "",1200).trim()]))} : {}),
     privateNote: text(input.privateNote || ""),
     score,
     scale,
