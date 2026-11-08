@@ -13,6 +13,7 @@ import {
   type Report,
   type Revision,
   type Skill,
+  type Activity,
 } from "./domain";
 import type { ChapterSnapshot } from "./chapter-pdf";
 import { reportPdfName, REPORT_PDF_TEMPLATE } from "./report-metadata";
@@ -163,10 +164,10 @@ async function reportInput(input: any, publishing = false) {
   if (grid.chapter_id !== input.chapterId)
     fail(400, "La grille ne correspond pas au chapitre.");
   const skills = grid.skills as Skill[];
-  if (!Array.isArray(input.activities) || input.activities.length > 60)
+  if (!Array.isArray(input.activities) || input.activities.length > 300)
     fail(400, "Le nombre d’activités est invalide.");
   const activities = input.activities.map((a: any) => {
-    if (!skills.some((s) => s.id === a.skillId))
+    if (!skills.some((s) => s.id === a.skillId) && (publishing || a.skillId !== "" || a.level !== null))
       fail(400, "Choisissez une notion de la grille.");
     if (!["cours", "td", "evaluation"].includes(a.type))
       fail(400, "Choisissez un type de travail.");
@@ -185,6 +186,8 @@ async function reportInput(input: any, publishing = false) {
       confirmed: a.level === 100 && a.confirmed === true,
       workRef: text(a.workRef || "", 200).trim(),
       exercises: text(a.exercises || "", 2000),
+      ...(a.workId ? {workId: text(a.workId,100)} : {}),
+      ...(a.documentIds !== undefined ? {documentIds: Array.isArray(a.documentIds) && a.documentIds.length <= 40 ? [...new Set(a.documentIds.map((id:unknown)=>text(id,100)))] : fail(400,"Supports de l’activité invalides.")} : {}),
     };
   });
   if (input.performances !== undefined && (!Array.isArray(input.performances) || input.performances.length > 30)) fail(400, "Maximum 30 résultats chronométrés par séance.");
@@ -192,10 +195,10 @@ async function reportInput(input: any, publishing = false) {
     const score = p.score === null || p.score === undefined ? null : Number(p.score);
     const scale = p.scale === null || p.scale === undefined ? null : Number(p.scale);
     const minutes = p.minutes === null || p.minutes === undefined ? null : Number(p.minutes);
-    if (!["td", "evaluation", "exercice"].includes(p.type) || !text(p.title || "",160).trim()) fail(400,"Donnez un intitulé et un type au résultat.");
+    if (!["td", "evaluation", "exercice"].includes(p.type) || !text(p.title || "Résultat",160).trim()) fail(400,"Donnez un intitulé et un type au résultat.");
     if ((score !== null && (!Number.isFinite(score) || score < 0)) || (scale !== null && (!Number.isFinite(scale) || scale <= 0)) || (minutes !== null && (!Number.isFinite(minutes) || minutes <= 0 || minutes > 1440))) fail(400,"Note, barème ou durée invalide.");
     if (publishing && ((score === null) !== (scale === null) || (score !== null && score > scale!) || (score === null && minutes === null))) fail(400,"Renseignez une note avec son barème, ou une durée positive.");
-    return {id:text(p.id,100),title:text(p.title,160).trim(),type:p.type,score,scale,minutes};
+    return {id:text(p.id,100),title:text(p.title || "Résultat",160).trim(),type:p.type,score,scale,minutes,...(p.workId ? {workId:text(p.workId,100)} : {})};
   });
   const assessmentMinutes=input.assessmentMinutes===null || input.assessmentMinutes===undefined ? null : Number(input.assessmentMinutes);
   if(assessmentMinutes!==null && (!Number.isFinite(assessmentMinutes) || assessmentMinutes<=0 || assessmentMinutes>1440)) fail(400,"La durée du contrôle doit être positive et inférieure à 1 440 minutes.");
@@ -215,6 +218,14 @@ async function reportInput(input: any, publishing = false) {
   if (!Array.isArray(input.documentIds) || input.documentIds.length > 40)
     fail(400, "La liste des documents est invalide.");
   const documentIds = [...new Set(input.documentIds)] as string[];
+  const bundles = new Map<string, typeof activities>();
+  for (const activity of activities) {
+    if (activity.documentIds?.some((id:string)=>!documentIds.includes(id))) fail(400,"Un support de l’activité manque dans le bilan.");
+    if (activity.workId) bundles.set(activity.workId,[...(bundles.get(activity.workId) || []),activity]);
+  }
+  for (const members of bundles.values()) {
+    if (new Set(members.map((a:Activity)=>a.skillId)).size !== members.length || members.some((a:Activity)=>a.type!==members[0].type || JSON.stringify(a.documentIds || [])!==JSON.stringify(members[0].documentIds || []))) fail(400,"Les notions d’une même activité doivent partager le type et les supports, sans doublon.");
+  }
   const hidden = hiddenResources(await lifecycle(), "document");
   for (const id of documentIds) {
     if (hidden.has(id))
@@ -394,6 +405,7 @@ async function loadWorkspaceData(actor: Awaited<ReturnType<typeof identity>>, da
           .filter((g) => g.chapter_id === c.id && g.created_at <= cutoff)
           .at(-1) || gridRows.find((g) => g.chapter_id === c.id);
       const grid = { ...g, skills: parse(g.skills), source: parse(g.source) };
+      const current = gridRows.filter(g=>g.chapter_id===c.id).at(-1);
       const ev = events.filter((e) => e.chapter_id === c.id).at(-1);
       const closing = events
         .filter((e) => e.chapter_id === c.id && e.state === "closed")
@@ -431,6 +443,7 @@ async function loadWorkspaceData(actor: Awaited<ReturnType<typeof identity>>, da
           ? ev.note || "État renseigné par le professeur"
           : "Situation initiale déclarée · dates inconnues",
         grid,
+        ...(actor.role === "teacher" ? {currentGrid:{...current,skills:parse(current.skills),source:parse(current.source)}} : {}),
         metrics: metrics(
           published.filter((x) => x.payload.chapterId === c.id),
           grid.skills,
@@ -509,6 +522,7 @@ async function loadWorkspaceData(actor: Awaited<ReturnType<typeof identity>>, da
           chapterId: report?.payload.chapterId || s.chapter_id,
           status: report ? "published" : s.status,
           hasDraft: actor.role === "teacher" && !!s.draft,
+          ...(actor.role === "teacher" && s.draft ? {title:parse(s.draft).title} : {}),
           report,
           supportIds: actor.role === "teacher" && !report && s.draft ? parse(s.draft).documentIds : [],
         };
@@ -791,8 +805,8 @@ export async function handle(r: Request, path: string[]) {
       if (report.date > todayParis())
         fail(400, "Une séance future reste prévue jusqu’à sa réalisation.");
       for (const a of report.activities) {
-        if (a.type === "td" && !a.workRef)
-          fail(400, "Indiquez une référence stable pour chaque TD.");
+        if (a.type === "td" && !a.workRef && !a.workId)
+          fail(400, "Le TD doit être associé à une activité.");
       }
       const grid = await gridFor(report.gridId);
       if (!grid.validated)
@@ -994,6 +1008,26 @@ export async function handle(r: Request, path: string[]) {
     )
       fail(404, "Chapitre introuvable.");
     const input = await body(r);
+    if (path[2] === "skills" && r.method === "POST") {
+      const previous = await one("SELECT * FROM grids WHERE chapter_id=? ORDER BY version DESC LIMIT 1", id);
+      const oldSkills = parse(previous.skills) as Skill[];
+      const skill: Skill = {id:text(input.skillId,100), label:text(input.label,250).trim(), group:text(input.group || "Compétences complémentaires",120).trim(), weight:1, origin:"teacher", validated:true};
+      if (!skill.id || !skill.label || !skill.group || input.validated !== true) fail(400,"Renseignez la compétence et confirmez sa validation.");
+      const existing=oldSkills.find(s=>s.id===skill.id);
+      if(existing) {
+        if(existing.label!==skill.label || existing.group!==skill.group) fail(409,"Cet identifiant est déjà utilisé.");
+        return json({grid:await gridFor(previous.id),skill:existing});
+      }
+      const equivalent=oldSkills.find(s=>s.label.trim().toLocaleLowerCase("fr")===skill.label.toLocaleLowerCase("fr") && (s.group || "Compétences complémentaires").trim().toLocaleLowerCase("fr")===skill.group!.toLocaleLowerCase("fr"));
+      if(equivalent)return json({grid:await gridFor(previous.id),skill:equivalent});
+      if (oldSkills.length>=200) fail(400,"La grille contient déjà 200 compétences.");
+      if (previous.id !== input.baseGridId) fail(409,"La grille a changé. Actualisez-la avant d’ajouter une compétence.");
+      const gridId=id+"-v"+(previous.version+1);
+      const added=await db().prepare("INSERT OR IGNORE INTO grids (id,chapter_id,version,skills,source,validated,created_at) VALUES (?,?,?,?,?,?,?)")
+        .bind(gridId,id,previous.version+1,JSON.stringify([...oldSkills,skill]),previous.source,previous.validated,now()).run();
+      if (!added.meta.changes) fail(409,"Une autre modification vient d’être enregistrée. Actualisez la grille.");
+      return json({grid:await gridFor(gridId),skill});
+    }
     if (path[2] === "state" && r.method === "POST") {
       if (!["active", "closed", "revision"].includes(input.state))
         fail(400, "État invalide.");
@@ -1057,15 +1091,16 @@ export async function handle(r: Request, path: string[]) {
       if (
         !Array.isArray(input.skills) ||
         !input.skills.length ||
-        input.skills.length > 80
+        input.skills.length > 200
       )
-        fail(400, "La grille doit contenir de 1 à 80 compétences.");
+        fail(400, "La grille doit contenir de 1 à 200 compétences.");
       const skills = input.skills.map((s: any) => ({
         id: text(s.id, 100),
         label: text(s.label, 250).trim(),
         ...(s.group ? { group: text(s.group, 120) } : {}),
         ...(s.detail ? { detail: text(s.detail, 500) } : {}),
         weight: s.weight === undefined ? 1 : Number(s.weight),
+        ...(s.origin === "teacher" ? {origin:"teacher",validated:s.validated===true} : {}),
       }));
       if (
         skills.some((s: any) => !s.label || !Number.isFinite(s.weight) || s.weight <= 0 || s.weight > 100) ||
@@ -1096,7 +1131,7 @@ export async function handle(r: Request, path: string[]) {
           now(),
         )
         .run();
-      return json({ ok: true });
+      return json({ ok: true, grid: await gridFor(id + "-v" + version) });
     }
   }
   if (route === "student" && r.method === "PUT") {

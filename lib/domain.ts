@@ -4,6 +4,8 @@ export type Skill = {
   group?: string;
   detail?: string;
   weight?: number;
+  origin?: "teacher";
+  validated?: boolean;
 };
 export type Activity = {
   id: string;
@@ -13,8 +15,20 @@ export type Activity = {
   confirmed: boolean;
   workRef: string;
   exercises: string;
+  workId?: string;
+  documentIds?: string[];
 };
+// One activity may cover several notions; observations remain separate for history.
+export function activityBundles(activities: Activity[]) {
+  const bundles = new Map<string, Activity[]>();
+  for (const activity of activities) {
+    const id = activity.workId || (activity.workRef ? `legacy:${activity.type}:${activity.workRef.trim().toLocaleLowerCase("fr")}` : activity.id);
+    bundles.set(id, [...(bundles.get(id) || []), activity]);
+  }
+  return [...bundles].map(([id, members]) => ({id, activities:members, type:members[0].type, documentIds:[...new Set(members.flatMap(a=>a.documentIds || []))]}));
+}
 export type Performance = {
+  workId?: string;
   id: string; title: string; type: "td" | "evaluation" | "exercice";
   score: number | null; scale: number | null; minutes: number | null;
 };
@@ -130,6 +144,7 @@ export function metrics(revs: Revision[], skills: Skill[]) {
   const latest = new Map<string, { level: number; date: string }>(),
     worked = new Set<string>(),
     tds = new Set<string>(),
+    workReferences = new Map<string,string>(),
     exercises = new Set<string>();
   const ids = new Set(skills.map((s) => s.id));
   const curve: {
@@ -158,8 +173,11 @@ export function metrics(revs: Revision[], skills: Skill[]) {
           latest.set(a.skillId, { level: a.level, date: r.payload.date });
         }
       }
-      if (a.type === "td" && a.workRef.trim())
-        tds.add(a.workRef.trim().toLocaleLowerCase("fr").replace(/\s+/g, " "));
+      if (a.type === "td") {
+        const reference = a.workRef.trim().toLocaleLowerCase("fr").replace(/\s+/g, " ");
+        if (a.workId) workReferences.set(a.workId,reference || "activity:" + a.workId);
+        if (reference || a.workId) tds.add(reference || "activity:" + a.workId);
+      }
       const ref = a.workRef.trim().toLocaleLowerCase("fr") || r.session_id;
       for (const ex of a.exercises
         .split(/[,;\n]/)
@@ -190,7 +208,7 @@ export function metrics(revs: Revision[], skills: Skill[]) {
       });
   }
   for (const r of revs) if(r.payload.score === null && r.payload.assessmentMinutes) performances.push({id:r.id+'-duration',date:r.payload.date,title:r.payload.assessmentTitle || 'Contrôle',type:'evaluation',score:null,scale:null,minutes:r.payload.assessmentMinutes});
-  for (const p of performances) if (p.type === "td") tds.add(p.title.trim().toLocaleLowerCase("fr").replace(/\s+/g, " "));
+  for (const p of performances) if (p.type === "td") tds.add(p.workId ? workReferences.get(p.workId) || "activity:"+p.workId : p.title.trim().toLocaleLowerCase("fr").replace(/\s+/g, " "));
   const values = [...latest.values()];
   return {
     total: skills.length,
@@ -244,4 +262,18 @@ export function performancePoints(m: any): any[] {
   const additional=measured.filter((p:any)=>p.score !== null && p.scale).length;
   const legacy=m.assessments.slice(0,Math.max(0,m.assessments.length-additional)).map((p:any,i:number)=>({...p,id:"legacy-"+i,type:"evaluation",minutes:p.minutes ?? null}));
   return [...legacy,...measured].sort((a:any,b:any)=>a.date.localeCompare(b.date));
+}
+
+export function replaceActivityBundle(report:Report,bundleId:string,members:Activity[]):Report {
+  const bundle=activityBundles(report.activities).find(b=>b.id===bundleId);
+  if(!bundle)return report;
+  const originalIds=new Set(bundle.activities.map(a=>a.id));
+  const at=report.activities.findIndex(a=>originalIds.has(a.id));
+  const remaining=report.activities.filter(a=>!originalIds.has(a.id));
+  remaining.splice(at,0,...members);
+  const previousDocs=new Set(bundle.documentIds);
+  return {...report,activities:remaining,documentIds:[...new Set([
+    ...report.documentIds.filter(id=>!previousDocs.has(id)||remaining.some(a=>a.documentIds?.includes(id))),
+    ...members.flatMap(a=>a.documentIds || []),
+  ])]};
 }

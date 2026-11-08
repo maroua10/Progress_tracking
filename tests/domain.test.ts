@@ -168,3 +168,11 @@ test("Une séance du jour reste visible après minuit à Paris avant minuit UTC"
  const r=revision("late","2026-11-07",[75,null,null],"2026-11-06T23:03:00.000Z");
  assert.equal(latestRevisions([r],"2026-11-06T23:05:00.000Z").length,1);
 });
+
+test('Un TD multi-notions compte une fois et chaque observation garde son niveau',()=>{
+ const r=revision('multi','2026-10-03',[null,25]);
+ r.payload.activities=r.payload.activities.map(a=>({...a,workRef:'',workId:'un-seul-td',documentIds:['support-td']}));
+ r.payload.performances=Array.from({length:6},(_,i)=>({id:'part-'+i,workId:'un-seul-td',title:'Partie '+i,type:'td',score:14,scale:16,minutes:6}));
+ const m=metrics([r],skills);
+ assert.equal(m.tds,1);assert.equal(m.evaluated,1);assert.equal(m.mastery,25);assert.equal(m.performances.length,6);
+});

@@ -1,4 +1,7 @@
 "use client";
+import ActivityEditor from "./activity-editor";
+import SkillQuickAdd from "./skill-quick-add";
+import {activityBundles,replaceActivityBundle} from "../lib/domain";
 import ParentAccounts from "../components/parent-accounts";
 import {
   useState,
@@ -896,6 +899,7 @@ export default function App() {
                       chapter={chapter}
                       data={data}
                       teacher={teacher}
+                      onSkillAdded={load}
                       onEditGrid={() => setDialog({ type: "grid", chapter })}
                       onAdopt={() =>
                         act(
@@ -1129,7 +1133,7 @@ function ChapterIndicators({metrics:m}:AnyData) {
 function Overview({chapter:c,onOpen}:AnyData) {
   return <section className="panel overview"><div className="panel-heading"><h2>{c.title}<span className={"status "+c.state}>{stateLabel[c.state]}</span></h2><button className="text-button" onClick={onOpen}>Voir le chapitre<Icon name="arrow" size={16}/></button></div><ChapterIndicators metrics={c.metrics}/></section>;
 }
-function ChapterDetail({chapter:c,data,teacher,onEditGrid,onAdopt,onState,onDeleteDocument}:AnyData) {
+function ChapterDetail({chapter:c,data,teacher,onEditGrid,onAdopt,onState,onDeleteDocument,onSkillAdded}:AnyData) {
   const [sub,setSub]=useState("overview");
   const preview=useContext(DocumentPreviewContext);
   const closure=(data.chapterReports || []).find((d:AnyData)=>d.chapterId===c.id && (!c.closedAt || d.closedAt===c.closedAt));
@@ -1146,7 +1150,7 @@ function ChapterDetail({chapter:c,data,teacher,onEditGrid,onAdopt,onState,onDele
     <div className="tabs" role="group" aria-label="Rubriques du chapitre">{[['overview','Vue d’ensemble'],['skills','Compétences']].map(([id,label])=><button key={id} className={sub===id?'selected':''} onClick={()=>setSub(id)}>{label}</button>)}</div>
     <div className="chapter-tab-content">
       {sub==='overview' && <><ChapterIndicators metrics={m}/><PerformanceCharts metrics={m}/><Chart metrics={m}/><ReferenceCard source={shownGrid.source} available={data.documents.some((d:AnyData)=>d.id===referenceDocument.id)}/></>}
-      {sub==='skills' && <><div className="section-line"><h3>Compétences</h3>{teacher && <button className="button small secondary" onClick={onEditGrid}>Modifier</button>}</div>{teacher && !c.grid.source.catalogueVersion && <button className="text-button" onClick={onAdopt}>Adopter la grille détaillée</button>}<SkillChecklist chapter={{...c,grid:shownGrid,metrics:m}}/></>}
+      {sub==='skills' && <><div className="section-line"><h3>Compétences</h3>{teacher && <button className="button small secondary" onClick={onEditGrid}>Modifier</button>}</div>{teacher && !c.grid.source.catalogueVersion && <button className="text-button" onClick={onAdopt}>Adopter la grille détaillée</button>}{teacher && <SkillQuickAdd chapterId={c.id} grid={c.currentGrid || c.grid} onAdded={async()=>{await onSkillAdded();}}/>}<SkillChecklist chapter={{...c,grid:c.grid,metrics:c.metrics}}/></>}
     </div>
   </section>;
 }
@@ -1175,7 +1179,7 @@ function History({data,onReport,onEdit,onDelete,onTrash}:AnyData) {
   const sessions=[...data.historySessions].filter((s:AnyData)=>(!chapter || s.chapterId===chapter)&&(!day || s.date===day)).sort((a:AnyData,b:AnyData)=>b.date.localeCompare(a.date)||a.id.localeCompare(b.id));
   const pages=Math.max(1,Math.ceil(sessions.length/10)),current=Math.min(page,pages),shown=sessions.slice((current-1)*10,current*10);
   return <section className="panel history-panel"><div className="filters history-filters"><label>Chapitre<select value={chapter} onChange={e=>{setChapter(e.target.value);setPage(1);}}><option value="">Tous les chapitres</option>{data.chapters.map((c:AnyData)=><option key={c.id} value={c.id}>{c.title}</option>)}</select></label><label>Date de la séance<input type="date" value={day} onChange={e=>{setDay(e.target.value);setPage(1);}}/></label>{day && <button className="text-button" onClick={()=>{setDay('');setPage(1);}}>Effacer la date</button>}{data.role==='teacher' && <button className="icon-button" aria-label="Ouvrir la corbeille" onClick={onTrash}><Icon name="trash"/></button>}</div>
-    {!sessions.length?<Empty title="Aucune séance dans cette sélection"/>:<div className="history-entries">{shown.map((s:AnyData)=><article className="history-entry" key={s.id}><div className="history-entry-heading"><time dateTime={s.date}>{dateLabel(s.date,{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</time><span className={"status "+(s.report?"published":s.status==='cancelled'?"cancelled":s.hasDraft?"draft":"planned")}>{s.report?'Publié':s.status==='cancelled'?'Annulée':s.hasDraft?'Brouillon':'À renseigner'}</span></div><div className="history-entry-main"><div><span className="chapter-label">{data.chapters.find((c:AnyData)=>c.id===s.chapterId)?.title}</span><h2>{s.report?.payload.title || 'Séance'}</h2></div><div className="button-row">{s.report?<><SessionFiles pdf={s.report.pdf} ids={s.report.payload.documentIds} documents={data.documents}/><button className="text-button" onClick={()=>onReport(s.report)}>Détails</button>{data.role==='teacher' && <><button className="button small secondary" onClick={()=>onEdit(s.id)}>Modifier</button><button className="icon-button danger-icon" aria-label={'Supprimer la séance du '+dateLabel(s.date)} onClick={()=>onDelete(s)}><Icon name="trash"/></button></>}</>:data.role==='teacher' && <><button className="button small secondary" onClick={()=>onEdit(s.id)}>Renseigner</button><button className="icon-button danger-icon" aria-label={'Supprimer la séance du '+dateLabel(s.date)} onClick={()=>onDelete(s)}><Icon name="trash"/></button></>}</div></div>{!s.report && <SessionFiles ids={s.supportIds || []} documents={data.documents}/>}</article>)}</div>}
+    {!sessions.length?<Empty title="Aucune séance dans cette sélection"/>:<div className="history-entries">{shown.map((s:AnyData)=><article className="history-entry" key={s.id}><div className="history-entry-heading"><time dateTime={s.date}>{dateLabel(s.date,{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</time><span className={"status "+(s.report?"published":s.status==='cancelled'?"cancelled":s.hasDraft?"draft":"planned")}>{s.report?'Publié':s.status==='cancelled'?'Annulée':s.hasDraft?'Brouillon':'À renseigner'}</span></div><div className="history-entry-main"><div><span className="chapter-label">{data.chapters.find((c:AnyData)=>c.id===s.chapterId)?.title}</span><h2>{s.report?.payload.title || s.title || 'Séance'}</h2></div><div className="button-row">{s.report?<><SessionFiles pdf={s.report.pdf} ids={s.report.payload.documentIds} documents={data.documents}/><button className="text-button" onClick={()=>onReport(s.report)}>Détails</button>{data.role==='teacher' && <><button className="button small secondary" onClick={()=>onEdit(s.id)}>Modifier</button><button className="icon-button danger-icon" aria-label={'Supprimer la séance du '+dateLabel(s.date)} onClick={()=>onDelete(s)}><Icon name="trash"/></button></>}</>:data.role==='teacher' && <><button className="button small secondary" onClick={()=>onEdit(s.id)}>Renseigner</button><button className="icon-button danger-icon" aria-label={'Supprimer la séance du '+dateLabel(s.date)} onClick={()=>onDelete(s)}><Icon name="trash"/></button></>}</div></div>{!s.report && <SessionFiles ids={s.supportIds || []} documents={data.documents}/>}</article>)}</div>}
     <nav className="pagination" aria-label="Pages de l’historique"><span>{sessions.length} séance{sessions.length!==1?'s':''}</span><div className="button-row"><button className="icon-button" disabled={current<=1} aria-label="Page précédente" onClick={()=>setPage(current-1)}><Icon name="left"/></button><span aria-live="polite">{current} / {pages}</span><button className="icon-button" disabled={current>=pages} aria-label="Page suivante" onClick={()=>setPage(current+1)}><Icon name="right"/></button></div></nav>
   </section>;
 }
@@ -1332,6 +1336,7 @@ function SessionEditor({
     [reason, setReason] = useState(""),
     [moveDate, setMoveDate] = useState(""),
     [localConflict, setLocalConflict] = useState<string | null>(null);
+  const chapterGrid=(id:string)=>{const chapter=data.chapters.find((c:AnyData)=>c.id===id);return chapter.currentGrid || chapter.grid;};
   const draftRef = useRef<Report | null>(null),
     version = useRef(0),
     change = useRef(0),
@@ -1364,6 +1369,8 @@ function SessionEditor({
             } else setLocalConflict(cache);
           } catch {}
         }
+        const workIds = new Map(activityBundles(initial.activities).map(bundle=>[bundle.id,bundle.activities[0].workId || crypto.randomUUID()]));
+        initial={...initial,activities:activityBundles(initial.activities).flatMap(bundle=>bundle.activities.map(activity=>({...activity,workId:workIds.get(bundle.id)})))};
         draftRef.current = initial;
         setDraft(initial);
       } catch (e) {
@@ -1456,14 +1463,6 @@ function SessionEditor({
   function resultPatch(index: number, fields: AnyData) {
     patch({performances:(draftRef.current!.performances || []).map((p,i)=>i===index?{...p,...fields}:p)});
   }
-  function activity(index: number, fields: Partial<Activity>) {
-    if (draftRef.current)
-      patch({
-        activities: draftRef.current.activities.map((a, i) =>
-          i === index ? { ...a, ...fields } : a,
-        ),
-      });
-  }
   async function close() {
     if (busy) return;
     if (!draftRef.current) {
@@ -1511,6 +1510,21 @@ function SessionEditor({
     } finally {
       setBusy(false);
     }
+  }
+  async function uploadSupports(files:File[],bundleId:string) {
+    setBusy(true);setError("");
+    try {
+      for(const file of files){
+        const uploadRequest=async<T,>(body:unknown):Promise<T>=>{const response=await fetch('/api/auth/uploads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const result=await response.json() as T & {error?:string};if(!response.ok)throw new Error(result.error || 'Le support n’a pas pu être enregistré.');return result;};
+        const ticket=await uploadRequest<{id:string;url:string}>({operation:'prepare',sessionId:id,name:file.name,size:file.size});
+        const sent=await fetch(ticket.url,{method:'PUT',headers:{'Content-Type':'application/pdf'},body:file});
+        if(!sent.ok)throw new Error('L’envoi du support a échoué. Réessayez.');
+        const doc=await uploadRequest<{id:string;name:string;size:number}>({operation:'complete',id:ticket.id});
+        setLoaded((value:AnyData)=>({...value,documents:[...value.documents,doc]}));
+        const current=draftRef.current!,bundle=activityBundles(current.activities).find(b=>b.id===bundleId);
+        if(bundle){const workId=bundle.activities[0].workId || crypto.randomUUID();update(replaceActivityBundle(current,bundleId,bundle.activities.map(a=>({...a,workId,documentIds:[...bundle.documentIds,doc.id]}))));}
+      }
+    }catch(e){setError((e as Error).message);}finally{setBusy(false);}
   }
   async function copyLast() {
     const prior = [...data.reports]
@@ -1638,8 +1652,8 @@ function SessionEditor({
                     );
                     patch({
                       chapterId: c.id,
-                      gridId: c.grid.id,
-                      skills: c.grid.skills,
+                      gridId: chapterGrid(c.id).id,
+                      skills: chapterGrid(c.id).skills,
                       activities: [],
                     });
                   }}
@@ -1667,9 +1681,7 @@ function SessionEditor({
                 <select
                   value={draft.gridId}
                   onChange={(e) => {
-                    const g = data.chapters.find(
-                      (c: AnyData) => c.id === draft.chapterId,
-                    ).grid;
+                    const g = chapterGrid(draft.chapterId);
                     patch({
                       gridId: g.id,
                       skills: g.skills,
@@ -1680,28 +1692,21 @@ function SessionEditor({
                   }}
                 >
                   {draft.gridId !==
-                    data.chapters.find((c: AnyData) => c.id === draft.chapterId)
-                      .grid.id && (
+                    chapterGrid(draft.chapterId).id && (
                     <option value={draft.gridId}>
                       Version conservée dans ce bilan
                     </option>
                   )}
                   <option
                     value={
-                      data.chapters.find(
-                        (c: AnyData) => c.id === draft.chapterId,
-                      ).grid.id
+                      chapterGrid(draft.chapterId).id
                     }
                   >
                     Version{" "}
                     {
-                      data.chapters.find(
-                        (c: AnyData) => c.id === draft.chapterId,
-                      ).grid.version
+                      chapterGrid(draft.chapterId).version
                     }{" "}
-                    {data.chapters.find(
-                      (c: AnyData) => c.id === draft.chapterId,
-                    ).grid.validated
+                    {chapterGrid(draft.chapterId).validated
                       ? "· validée"
                       : "· à valider"}
                   </option>
@@ -1725,150 +1730,14 @@ function SessionEditor({
                 </p>
               </div>
             </div>
-            {draft.activities.map((a, index) => (
-              <fieldset className="activity-fieldset" key={a.id}>
-                <legend>Activité {index + 1}</legend>
-                <div className="activity-top">
-                  <label>
-                    Notion
-                    <select
-                      value={a.skillId}
-                      onChange={(e) =>
-                        activity(index, { skillId: e.target.value })
-                      }
-                    >
-                      {draft.skills.map((s) => (
-                        <option value={s.id} key={s.id}>
-                          {s.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    className="icon-button"
-                    aria-label={"Supprimer l’activité " + (index + 1)}
-                    onClick={() =>
-                      patch({
-                        activities: draft.activities.filter(
-                          (_, i) => i !== index,
-                        ),
-                      })
-                    }
-                  >
-                    <Icon name="close" size={16} />
-                  </button>
-                </div>
-                <div
-                  className="segmented"
-                  role="group"
-                  aria-label={"Type de travail de l’activité " + (index + 1)}
-                >
-                  {Object.entries(workLabel).map(([k, v]) => (
-                    <button
-                      type="button"
-                      key={k}
-                      aria-pressed={a.type === k}
-                      className={a.type === k ? "selected" : ""}
-                      onClick={() =>
-                        activity(index, { type: k as Activity["type"] })
-                      }
-                    >
-                      {v}
-                    </button>
-                  ))}
-                </div>
-                <div className="level-heading">
-                  Maîtrise observée <span>facultatif</span>
-                </div>
-                <div
-                  className="level-options"
-                  role="group"
-                  aria-label={"Niveau de maîtrise de l’activité " + (index + 1)}
-                >
-                  {[null, 0, 25, 50, 75, 100].map((n) => (
-                    <button
-                      type="button"
-                      key={String(n)}
-                      aria-pressed={a.level === n}
-                      className={
-                        (a.level === n ? "selected " : "") +
-                        (n === 100 ? "confirmed-level" : "")
-                      }
-                      onClick={() =>
-                        activity(index, { level: n, confirmed: false })
-                      }
-                    >
-                      {n === null ? "Non évaluée" : n + " %"}
-                    </button>
-                  ))}
-                </div>
-                <p className="level-explanation">
-                  {levelLabels[a.level === null ? "none" : a.level]}
-                </p>
-                {a.level === 100 && (
-                  <label className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={a.confirmed}
-                      onChange={(e) =>
-                        activity(index, { confirmed: e.target.checked })
-                      }
-                    />
-                    Je confirme une réussite autonome sur un autre exercice ou
-                    une autre séance.
-                  </label>
-                )}
-                <div className="form-grid">
-                  <label>
-                    {a.type === "td"
-                      ? "Référence stable du TD"
-                      : "Support de travail (facultatif)"}
-                    <input
-                      value={a.workRef}
-                      onChange={(e) =>
-                        activity(index, { workRef: e.target.value })
-                      }
-                      placeholder="Ex. TD Suites 1"
-                      maxLength={200}
-                    />
-                  </label>
-                  <label>
-                    Exercices réalisés
-                    <input
-                      value={a.exercises}
-                      onChange={(e) =>
-                        activity(index, { exercises: e.target.value })
-                      }
-                      placeholder="Ex. 3, 4a, 7"
-                      maxLength={2000}
-                    />
-                  </label>
-                </div>
-              </fieldset>
-            ))}
-            <button
-              className="button secondary full-width dashed"
-              type="button"
-              onClick={() =>
-                patch({
-                  activities: [
-                    ...draft.activities,
-                    {
-                      id: crypto.randomUUID(),
-                      skillId: draft.skills[0].id,
-                      type: "cours",
-                      level: null,
-                      confirmed: false,
-                      workRef: "",
-                      exercises: "",
-                    },
-                  ],
-                })
-              }
-            >
-              <Icon name="plus" size={16} />
-              Ajouter une activité
-            </button>
+            <ActivityEditor report={draft} grid={chapterGrid(draft.chapterId)} documents={[...new Map([...data.documents,...loaded.documents].map((d:AnyData)=>[d.id,d])).values()].filter((d:AnyData)=>d.id!==referenceDocument.id) as AnyData[]} busy={busy} onChange={update} onUpload={uploadSupports} onAdded={async(grid,skill,bundleId)=>{
+              const current=draftRef.current!;
+              if(current.activities.some(a=>a.skillId && !grid.skills.some(s=>s.id===a.skillId))) throw new Error("La compétence est ajoutée au chapitre. Adoptez sa nouvelle grille pour l’utiliser dans ce bilan ancien.");
+              const bundle=activityBundles(current.activities).find(b=>b.id===bundleId);
+              const next={...current,gridId:grid.id,skills:grid.skills};
+              if(bundle){const workId=bundle.activities[0].workId || crypto.randomUUID();const members=bundle.activities.filter(a=>a.skillId).map(a=>({...a,workId}));if(!members.some(a=>a.skillId===skill.id))members.push({...bundle.activities[0],id:crypto.randomUUID(),workId,skillId:skill.id,level:null,confirmed:false});update(replaceActivityBundle(next,bundleId,members));}else update(next);
+              await onChanged();notify("Compétence ajoutée et validée.");
+            }}/>
             <details
               className="form-details"
               open={draft.score !== null || !!draft.assessmentMinutes || undefined}
@@ -1921,93 +1790,17 @@ function SessionEditor({
             </details>
             <details className="form-details" open={(draft.performances?.length || 0)>0 || undefined}>
               <summary>Notes de TD et temps mesurés <span>facultatif</span></summary>
-              {(draft.performances || []).map((p,i)=><fieldset key={p.id} className="performance-form"><legend>Résultat {i+1}</legend>
-                <label>{p.type === "td" ? "Référence du TD (identique si réutilisé)" : "Intitulé"}<input value={p.title} maxLength={160} onChange={e=>resultPatch(i,{title:e.target.value})}/></label>
+              {(draft.performances || []).map((p,i)=><details key={p.id} className="performance-result" open={p.score===null && p.minutes===null || undefined}><summary><span>{p.title || 'Résultat '+(i+1)}</span><small>{p.score!==null?`${p.score}/${p.scale ?? '—'}`:''}{p.minutes!==null?` · ${p.minutes} min`:''}</small></summary><fieldset className="performance-form"><legend>Résultat {i+1}</legend>
+                <label>Partie du support <span className="optional">facultatif</span><input value={p.title} maxLength={160} onChange={e=>resultPatch(i,{title:e.target.value})}/></label>
                 <label>Type<select value={p.type} onChange={e=>resultPatch(i,{type:e.target.value})}><option value="td">TD</option><option value="evaluation">Évaluation</option><option value="exercice">Exercice</option></select></label>
                 <div className="form-grid"><label>Note<input type="number" min="0" step="any" value={p.score ?? ""} onChange={e=>resultPatch(i,{score:e.target.value===""?null:Number(e.target.value)})}/></label>
                 <label>Barème<input type="number" min="0.01" step="any" value={p.scale ?? ""} onChange={e=>resultPatch(i,{scale:e.target.value===""?null:Number(e.target.value)})}/></label>
                 <label>Temps mesuré (minutes)<input type="number" min="0.01" max="1440" step="any" value={p.minutes ?? ""} onChange={e=>resultPatch(i,{minutes:e.target.value===""?null:Number(e.target.value)})}/></label></div>
-                <button type="button" className="text-button" onClick={()=>patch({performances:draft.performances!.filter((_,j)=>i!==j)})}>Retirer ce résultat</button>
-              </fieldset>)}
-              <button type="button" className="button secondary" onClick={()=>patch({performances:[...(draft.performances || []),{id:crypto.randomUUID(),title:"Résultat "+((draft.performances?.length || 0)+1),type:"td",score:null,scale:null,minutes:null}]})}>Ajouter un résultat ou un temps</button>
+                <label>Activité associée<select value={p.workId || ""} onChange={e=>resultPatch(i,{workId:e.target.value || undefined})}><option value="">Résultat indépendant</option>{activityBundles(draft.activities).map((b,j)=><option key={b.id} value={b.activities[0].workId || b.id}>{workLabel[b.type]} · Activité {j+1}</option>)}</select></label><button type="button" className="text-button" onClick={()=>patch({performances:draft.performances!.filter((_,j)=>i!==j)})}>Retirer ce résultat</button>
+              </fieldset></details>)}
+              <button type="button" className="button secondary" onClick={()=>patch({performances:[...(draft.performances || []),{id:crypto.randomUUID(),title:"Résultat "+((draft.performances?.length || 0)+1),type:"td",score:null,scale:null,minutes:null,...(activityBundles(draft.activities).filter(b=>b.type==="td").length===1?{workId:activityBundles(draft.activities).find(b=>b.type==="td")!.activities[0].workId}:{})}]})}>Ajouter un résultat ou un temps</button>
             </details>
-            <div className="editor-section">
-              <h3>Supports PDF</h3>
-              <p className="hint">
-                10 Mo maximum par fichier. Ils seront visibles par le parent
-                lors de la publication.
-              </p>
-              <div className="attachment-list">
-                {draft.documentIds.map((docId) => {
-                  const doc =
-                    loaded.documents.find((d: AnyData) => d.id === docId) ||
-                    data.documents.find((d: AnyData) => d.id === docId);
-                  return (
-                    <div key={docId}>
-                      <a href={"/api/documents/" + docId}>
-                        {doc?.name || "Support PDF"}
-                      </a>
-                      <button
-                        className="icon-button"
-                        aria-label={
-                          "Retirer " +
-                          (doc?.name || "le document") +
-                          " du bilan"
-                        }
-                        onClick={() =>
-                          patch({
-                            documentIds: draft.documentIds.filter(
-                              (x) => x !== docId,
-                            ),
-                          })
-                        }
-                      >
-                        <Icon name="close" size={14} />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-              <label className="upload-label">
-                {busy
-                  ? "Téléversement / publication…"
-                  : "Ajouter un ou plusieurs PDF"}
-                <input
-                  type="file"
-                  accept="application/pdf,.pdf"
-                  multiple
-                  disabled={busy}
-                  onChange={async (e) => {
-                    const files = [...(e.target.files || [])];
-                    e.target.value = "";
-                    setBusy(true);
-                    try {
-                      for (const file of files) {
-                        const uploadRequest=async(body:unknown)=>{const r=await fetch('/api/auth/uploads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const result:any=await r.json();if(!r.ok)throw new Error(result.error);return result;};
-                        const ticket=await uploadRequest({operation:'prepare',sessionId:id,name:file.name,size:file.size});
-                        const sent=await fetch(ticket.url,{method:'PUT',headers:{'Content-Type':'application/pdf'},body:file});
-                        if(!sent.ok)throw new Error('L’envoi du support a échoué. Réessayez.');
-                        const doc=await uploadRequest({operation:'complete',id:ticket.id});
-                        setLoaded((l: AnyData) => ({
-                          ...l,
-                          documents: [...l.documents, doc],
-                        }));
-                        patch({
-                          documentIds: [
-                            ...draftRef.current!.documentIds,
-                            doc.id,
-                          ],
-                        });
-                      }
-                    } catch (err) {
-                      setError((err as Error).message);
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
-                />
-              </label>
-            </div>
+            {draft.documentIds.some(docId=>!draft.activities.some(a=>a.documentIds?.includes(docId))) && <div className="editor-section"><h3>Autres supports du bilan</h3><div className="attachment-list">{draft.documentIds.filter(docId=>!draft.activities.some(a=>a.documentIds?.includes(docId))).map(docId=><div key={docId}><a href={"/api/documents/"+docId}>{loaded.documents.find((d:AnyData)=>d.id===docId)?.name || "Support PDF"}</a><button type="button" className="text-button" onClick={()=>patch({documentIds:draft.documentIds.filter(id=>id!==docId)})}>Retirer</button></div>)}</div></div>}
             <label className="editor-section">
               Commentaire destiné au parent{" "}
               <span className="optional">facultatif</span>
@@ -2245,7 +2038,7 @@ function ReportView({
                   {report.skills.find((s: Skill) => s.id === a.skillId)
                     ?.label || a.skillId}
                 </h3>
-                {a.workRef && <p>Support : {a.workRef}</p>}
+                {!a.workId && a.workRef && <p>Support : {a.workRef}</p>}
                 {a.exercises && <p>Exercices : {a.exercises}</p>}
                 <p className="hint">
                   {levelLabels[a.level === null ? "none" : a.level]}
@@ -2793,6 +2586,7 @@ function SkillChecklist({ chapter: c }: AnyData) {
                   </span>
                   <div className="task-label">
                     <span>{s.label}</span>
+                    {s.origin === "teacher" && <small className="skill-origin">Ajout du professeur</small>}
                     <small>
                       {c.metrics.latest[s.id]
                         ? "Observée le " +

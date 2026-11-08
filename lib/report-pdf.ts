@@ -296,7 +296,7 @@ export async function renderReportPdf(
           color: colors.muted,
           gap: 3,
         });
-      if (a.workRef)
+      if (!a.workId && a.workRef)
         write("Support : " + a.workRef, { size: 9, indent: 16, gap: 2 });
       if (a.exercises)
         write("Exercices : " + a.exercises, { size: 9, indent: 16, gap: 3 });

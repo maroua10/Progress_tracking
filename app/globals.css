@@ -3586,3 +3586,37 @@ body,button,input,textarea,select,h1,h2,h3,h4,.hint,.muted,.report-comment,.repo
 .session-empty-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
 .session-empty-actions > .session-action { flex: 1; }
 @media (max-width: 640px) { .session-management { width: 100%; } .session-management .button { flex: 1; justify-content: center; } .page-intro:has(.session-management) { align-items: stretch; } }
+
+/* Grouped activity entry and teacher additions */
+.activity-type-row { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px; }
+.activity-type-row .segmented { margin:0; }
+.skill-search { margin-bottom:12px; }
+.skill-picker { border:1px solid #ddd; background:#fff; max-height:360px; overflow:auto; }
+.skill-picker-group + .skill-picker-group { border-top:1px solid #ddd; }
+.skill-picker-group summary { display:flex; gap:12px; justify-content:space-between; cursor:pointer; padding:15px; font-weight:500; font-size:13px; }
+.skill-picker-group summary:before { content:'\203A'; color:#000091; }
+.skill-picker-group[open] summary:before { content:'\2304'; }
+.skill-picker-group summary span { flex:1; }
+.skill-picker-group summary small { color:#666; font-weight:400; white-space:nowrap; }
+.skill-picker-group > div { padding:0 15px 12px; }
+.skill-choice { padding:9px 0; align-items:flex-start; font-size:13px; }
+.skill-choice small { display:block; font-size:11px; color:#666; margin-top:3px; }
+.select-all-skills { border-bottom:1px solid #eee; padding:8px 0 12px; font-size:12px; }
+.selected-skills-summary { color:#000091; margin:12px 0 4px; font-size:12px; }
+.quick-skill-form { padding:18px; border-left:3px solid #000091; background:#f6f6fe; margin:15px 0; }
+.quick-skill-form h4 { margin-bottom:16px; }
+.quick-skill-form label { margin-bottom:14px; }
+.activity-support { margin-top:20px; border-top:1px solid #ddd; padding-top:18px; }
+.activity-support h4 { font-size:13px; margin-bottom:12px; }
+.activity-support-row { display:flex; align-items:center; gap:12px; justify-content:space-between; font-size:13px; padding:8px 0; }
+.activity-support-row a { overflow-wrap:anywhere; }
+.reuse-support { margin-top:12px; font-size:12px; }
+.notion-observation { padding:15px 0; border-bottom:1px solid #ddd; }
+.notion-observation h4 { margin-bottom:12px; font-size:13px; }
+.activity-levels { margin-top:18px; }
+@media(max-width:640px){ .activity-type-row { align-items:flex-start; }.activity-type-row .segmented button { padding:9px 12px; }.bundled-activity { padding:18px 14px; }.quick-skill-form { padding:15px; }.quick-skill-form .button-row { flex-wrap:wrap; } }
+
+.performance-result { border-bottom:1px solid #ddd; }
+.performance-result > summary { display:flex; justify-content:space-between; gap:14px; padding:16px 0; cursor:pointer; font-size:13px; }
+.performance-result > summary small { color:#000091; white-space:nowrap; }
+.performance-result .performance-form { margin:0 0 16px; }

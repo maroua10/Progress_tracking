@@ -1208,6 +1208,44 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
       assert.equal(after.historyReports.filter(r=>r.session_id===id).length,1);
       assert.equal((await call("reports/"+id+"/pdf","GET",null,parentCookie)).status,200);
     });
+    await t.test("ajout rapide validé : grille versionnée, référentiel intact, droits et reprise après réponse perdue", async()=>{
+      const before=(await call("data")).data, chapter=before.chapters.find(c=>c.id==='suites'), oldReports=before.historyReports;
+      const input={baseGridId:chapter.grid.id,skillId:'test-extra-algebra',label:'Réduire une expression littérale',group:'Fondamentaux du calcul algébrique',validated:true};
+      assert.equal((await call('chapters/suites/skills','POST',input,parentCookie)).status,403);
+      assert.equal((await call('chapters/suites/skills','POST',{...input,validated:false})).status,400);
+      const added=await call('chapters/suites/skills','POST',input);assert.equal(added.status,200);
+      assert.equal(added.data.skill.origin,'teacher');assert.equal(added.data.skill.validated,true);
+      assert.deepEqual(added.data.grid.source,chapter.grid.source);
+      assert.equal(added.data.grid.skills.length,chapter.grid.skills.length+1);
+      assert.equal((await call('chapters/suites/skills','POST',input)).data.grid.id,added.data.grid.id);
+      assert.equal((await call('chapters/suites/skills','POST',{...input,skillId:'test-other-skill',label:'Autre compétence'})).status,409);
+      const after=(await call('data')).data;
+      assert.equal(after.chapters.find(c=>c.id==='suites').grid.id,added.data.grid.id);
+      const historical=(await call('data?date=2025-01-01')).data.chapters.find(c=>c.id==='suites');
+      assert.equal(historical.currentGrid.id,added.data.grid.id);
+      assert.notEqual(historical.grid.id,added.data.grid.id);
+      assert.equal((await call('data?date=2025-01-01','GET',null,parentCookie)).data.chapters.find(c=>c.id==='suites').currentGrid,undefined);
+
+      assert.deepEqual(after.historyReports,oldReports);
+    });
+    await t.test("TD multi-compétences : un support, un TD, observations individuelles et publication protégée",async()=>{
+      let data=(await call('data')).data, chapter=data.chapters.find(c=>c.id==='suites');
+      if(!chapter.grid.validated){await call('chapters/suites/grid','POST',{baseGridId:chapter.grid.id,skills:chapter.grid.skills,validated:true});data=(await call('data')).data;chapter=data.chapters.find(c=>c.id==='suites');}
+      const made=await call('sessions','POST',{date:today(),chapterId:chapter.id}), id=made.data.id, editor=(await call('sessions/'+id)).data;
+      const workId='test-shared-td', activities=chapter.grid.skills.slice(0,3).map((skill,i)=>({id:'test-mini-'+i,workId,skillId:skill.id,type:'td',level:null,confirmed:false,workRef:'',exercises:'',documentIds:[pdfId]}));
+      const report={...editor.draft,title:'TEST — un seul TD, trois notions',activities,documentIds:[pdfId]};
+      assert.equal((await call('sessions/'+id+'/draft','PUT',{version:editor.session.version,report:{...report,documentIds:[]}})).status,400);
+      assert.equal((await call('sessions/'+id+'/draft','PUT',{version:editor.session.version,report:{...report,activities:[...activities,{...activities[0],id:'duplicate'}]}})).status,400);
+      assert.equal((await call('sessions/'+id+'/draft','PUT',{version:editor.session.version,report:{...report,activities:activities.map((a,i)=>i===1?{...a,type:'cours'}:a)}})).status,400);
+      const saved=await call('sessions/'+id+'/draft','PUT',{version:editor.session.version,report});assert.equal(saved.status,200);
+      const before=(await call('data')).data.chapters.find(c=>c.id===chapter.id).metrics;
+      assert.equal((await call('sessions/'+id+'/publish','POST',{version:saved.data.version,requestKey:'multi-notions-one-td'})).status,200);
+      const after=(await call('data')).data, summary=after.chapters.find(c=>c.id===chapter.id).metrics;
+      assert.equal(summary.tds,before.tds+1);assert.equal(summary.sessions,before.sessions+1);assert.equal(summary.evaluated,before.evaluated);
+      assert.equal(after.historyReports.find(r=>r.session_id===id).payload.activities.length,3);
+      const pdf=await call('reports/'+id+'/pdf','GET',null,parentCookie);assert.equal(pdf.status,200);
+      assert.match(await pdfText(new Uint8Array(await pdf.response.arrayBuffer())),/TEST/);
+    });
   } finally {
     await mf.dispose();
   }
