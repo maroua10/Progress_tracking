@@ -1033,15 +1033,15 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
       },
     );
     await t.test("résultats et durées conservés dans le bilan, le PDF et les statistiques", async () => {
-      const target=(await call("data?date=2026-11-06")).data.reports[0];
+      const target=(await call("data")).data.historyReports[0];
       const editor=(await call("sessions/"+target.session_id)).data;
       const performances=[{id:"chrono-1",title:"TEST TD chronométré",type:"td",score:7,scale:10,minutes:18}];
       const saved=await call("sessions/"+target.session_id+"/draft","PUT",{report:{...editor.draft,performances},version:editor.session.version});
       assert.equal(saved.status,200);
       const changed=await call("sessions/"+target.session_id+"/update","POST",{version:saved.data.version,requestKey:"timed-result"});
       assert.equal(changed.status,200);
-      const parent=(await call("data?date=2026-11-06","GET",null,parentCookie)).data;
-      assert.equal(parent.reports.find(r=>r.session_id===target.session_id).payload.performances[0].minutes,18);
+      const parent=(await call("data","GET",null,parentCookie)).data;
+      assert.equal(parent.historyReports.find(r=>r.session_id===target.session_id).payload.performances[0].minutes,18);
       const pdf=await call("reports/"+target.session_id+"/pdf");
       const text=await pdfText(new Uint8Array(await pdf.response.arrayBuffer()));
       assert.ok(text.includes("18 min"));assert.ok(text.includes("7 / 10"));

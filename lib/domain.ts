@@ -247,7 +247,14 @@ export function metrics(revs: Revision[], skills: Skill[]) {
       ? Math.round((latest.size / skills.length) * 100)
       : 0,
     progression: weightedProgress(skills, Object.fromEntries(latest)).value,
-    evaluations: revs.reduce((n,r) => n + (r.payload.performances || []).filter(p => p.type === "evaluation").length + (r.payload.score !== null || !!r.payload.assessmentMinutes || r.payload.activities.some(a => a.type === "evaluation") ? 1 : 0), 0),
+    evaluations: revs.reduce((n,r) => {
+      const ids = new Set(activityBundles(r.payload.activities).filter(b=>b.type === "evaluation").map(b=>b.id));
+      for (const p of r.payload.performances || []) if (p.type === "evaluation") ids.add(p.workId || "result:" + p.id);
+      if (r.payload.score !== null || !!r.payload.assessmentMinutes) {
+        if (!ids.size) ids.add("legacy-assessment");
+      }
+      return n + ids.size;
+    }, 0),
     performances,
     sessions: revs.length,
     tds: tds.size,
