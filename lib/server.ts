@@ -975,6 +975,12 @@ export async function handle(r: Request, path: string[]) {
     return json({id},201);
   }
   if(path[0]==="chapters" && path[1] && path[2]==="summary" && r.method==="GET") {
+    if(new URL(r.url).searchParams.get("current")==="1") {
+      const snapshot=await chapterSnapshot(path[1],now(),false);
+      const bytes=await (await import("./chapter-pdf")).renderChapterPdf({...snapshot,currentAt:now()});
+      await identity(r);
+      return new Response(bytes as BodyInit,{headers:{"Content-Type":"application/pdf","Content-Disposition":"attachment; filename*=UTF-8''"+encodeURIComponent('Synthèse actuelle - '+snapshot.title+'.pdf'),"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}});
+    }
     const id=path[1], all=await closureList(), closureId=new URL(r.url).searchParams.get("closure");
     const entry=all.find(x=>x.chapterId===id && (!closureId || x.id===closureId));
     if(!entry) fail(404,"Ce chapitre ne possède pas de bilan de clôture.");

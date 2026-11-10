@@ -1074,6 +1074,10 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
       await call('grants/'+newGrant.id,'DELETE');
       assert.equal((await call(path,'GET',null,cookie)).status,401);
 
+      const currentPath='chapters/'+archived.chapterId+'/summary?current=1';
+      assert.equal((await call(currentPath,'GET',null,null)).status,401);
+      const current=await call(currentPath,'GET',null,parentCookie);assert.equal(current.status,200);
+      const currentText=await pdfText(new Uint8Array(await current.response.arrayBuffer()));assert.ok(currentText.includes('Actualisé le'));assert.ok(currentText.includes('Compétences actuelles'));assert.ok(!currentText.includes('SECRET'));
       const again=await call(path);assert.deepEqual(new Uint8Array(await again.response.arrayBuffer()),bytes);
       const partial=data.chapterReports.find(d=>d.chapterId==='second-degre');
       assert.ok(partial);if(partial){const result=await call(partial.url.replace('/api/',''));assert.equal(result.status,200);const text=await pdfText(new Uint8Array(await result.response.arrayBuffer()));assert.ok(text.includes('date non renseignée'));}

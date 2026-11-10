@@ -1141,12 +1141,13 @@ function ChapterDetail({chapter:c,data,teacher,onEditGrid,onAdopt,onState,onDele
   const closure=(data.chapterReports || []).find((d:AnyData)=>d.chapterId===c.id && (!c.closedAt || d.closedAt===c.closedAt));
   const frozen=c.state==='closed' && c.finalMetrics;
   const m=frozen?c.finalMetrics:c.metrics;
+  const currentSummary={id:'current-'+c.id,name:'Synthèse actuelle - '+c.title,url:'/api/chapters/'+c.id+'/summary?current=1',kind:'chapter'};
   const shownGrid=frozen?(c.closureGrid || c.grid):c.grid;
   const reports=data.reports.filter((r:AnyData)=>r.payload.chapterId===c.id);
   const docs=data.documents.filter((d:AnyData)=>reports.some((r:AnyData)=>r.payload.documentIds.includes(d.id)));
   return <section className="panel chapter-detail">
     <div className="panel-heading"><h2>{c.title}<span className={"status "+c.state}>{stateLabel[c.state]}</span></h2><div className="button-row">
-      {c.state==='closed' && closure && <><button className="icon-button" aria-label="Visualiser le bilan de clôture" onClick={()=>preview(closure)}><Icon name="eye"/></button><a className="button small" href={closure.url}><Icon name="download" size={16}/>Télécharger la synthèse</a></>}
+      {c.state==='closed' && closure && <><button className="icon-button" aria-label="Visualiser la synthèse actuelle" onClick={()=>preview(currentSummary)}><Icon name="eye"/></button><a className="button small" href={currentSummary.url}><Icon name="download" size={16}/>Télécharger la synthèse</a></>}
       {teacher && <>{c.state!=='active' && <button className="button small secondary" onClick={()=>onState('active')}>Commencer</button>}{c.state==='closed'?<button className="button small secondary" onClick={()=>onState('revision')}>Rouvrir pour révision</button>:<button className="button small secondary" onClick={()=>onState('closed')}>Clôturer le chapitre</button>}</>}
     </div></div>
     <div className="tabs" role="group" aria-label="Rubriques du chapitre">{[['overview','Vue d’ensemble'],['skills','Compétences']].map(([id,label])=><button key={id} className={sub===id?'selected':''} onClick={()=>setSub(id)}>{label}</button>)}</div>

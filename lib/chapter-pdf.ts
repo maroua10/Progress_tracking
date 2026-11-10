@@ -4,6 +4,7 @@ import { reportRegularFont, reportBoldFont } from "./report-fonts";
 import { performancePoints, type Skill } from "./domain";
 export type ChapterSnapshot = {
   title: string; studentName: string; closedAt: string | null;
+  currentAt?: string;
   grid: {skills: Skill[]; source: any}; metrics: any; partial: boolean;
 };
 let regularBytes: Uint8Array | undefined, boldBytes: Uint8Array | undefined;
@@ -39,12 +40,12 @@ export async function renderChapterPdf(s: ChapterSnapshot) {
     y=top-height-35;
   }
   doc.setTitle('Bilan de chapitre - '+safe(s.title));doc.setAuthor('Repère');page();
-  text(s.title,22,true,navy,8);text(s.studentName,11,false,muted,2);text(s.closedAt?'Clôturé le '+date(s.closedAt):'Clôture déclarée - date non renseignée',10,false,muted,10);
+  text(s.title,22,true,navy,8);text(s.studentName,11,false,muted,2);text(s.currentAt?'Actualisé le '+date(s.currentAt):s.closedAt?'Clôturé le '+date(s.closedAt):'Clôture déclarée - date non renseignée',10,false,muted,10);
   const m=s.metrics;
   heading('Synthèse');
   text('Progression du chapitre : '+num(m.progression)+(m.progression===null?'':' %'),13,true);
   text(`${m.mastered} / ${m.total} notions maîtrisées  |  ${m.evaluated} / ${m.total} évaluées`,11);
-  text(`${m.tds} TD distinct${m.tds!==1?'s':''}  |  ${m.evaluations} évaluation${m.evaluations!==1?'s':''}  |  ${m.sessions} séance${m.sessions!==1?'s':''}  |  ${m.exercises} exercices`,10);
+  text(`${m.tds} TD distinct${m.tds!==1?'s':''}  |  ${m.evaluations} évaluation${m.evaluations!==1?'s':''}  |  ${m.sessions} séance${m.sessions!==1?'s':''}${s.currentAt?'':'  |  '+m.exercises+' exercices'}`,10);
   text('Maîtrise des notions évaluées : '+num(m.mastery)+(m.mastery===null?'':' %'),10);
   if(s.partial)text('Historique partiel',9,false,muted);
   graph('Progression du chapitre (%)',m.curve.filter((x:any)=>x.progression!==null).map((x:any)=>({date:x.date,value:x.progression,label:''})),100);
@@ -62,9 +63,9 @@ export async function renderChapterPdf(s: ChapterSnapshot) {
     y=top-height-35;text('Comparer des travaux de longueur et de difficulté proches.',8,false,muted,8);
   }
   if(results.length){heading('Résultats détaillés');for(const r of results){ensure(47);text(date(r.date)+' - '+r.title,10,true);text((r.score===null?'Sans note':`${r.score} / ${r.scale} (${num(20*r.score/r.scale)} / 20)`)+(r.minutes===null?'':` - ${num(r.minutes)} min`),9,false,muted);}}
-  ensure(150);heading('Compétences à la clôture');let group='';
+  ensure(150);heading(s.currentAt?'Compétences actuelles':'Compétences à la clôture');let group='';
   for(const skill of s.grid.skills){if((skill.group || 'Notions')!==group){group=skill.group||'Notions';heading(group);}const v=m.latest[skill.id]?.level ?? null;ensure(42);text(skill.label,10,false,ink,2);text(v===null?'Non évaluée':`${v} %${v===100?' - Maîtrisée':''}`,9,v===100,v===100?green:muted,7);}
   heading('Référentiel');text(s.grid.source?.reference || 'Programme de mathématiques',9);text(s.grid.source?.version || '',9,false,muted);
-  for(const [i,page] of doc.getPages().entries()){page.drawLine({start:{x:M,y:42},end:{x:W-M,y:42},color:line,thickness:.5});page.drawText('Repère - Bilan conservé à la clôture',{x:M,y:27,font:regular,size:8,color:muted});page.drawText(`${i+1} / ${doc.getPageCount()}`,{x:W-M-35,y:27,font:regular,size:8,color:muted});}
+  for(const [i,page] of doc.getPages().entries()){page.drawLine({start:{x:M,y:42},end:{x:W-M,y:42},color:line,thickness:.5});page.drawText(s.currentAt?'Repère - Synthèse des bilans publiés':'Repère - Bilan conservé à la clôture',{x:M,y:27,font:regular,size:8,color:muted});page.drawText(`${i+1} / ${doc.getPageCount()}`,{x:W-M-35,y:27,font:regular,size:8,color:muted});}
   return doc.save();
 }
