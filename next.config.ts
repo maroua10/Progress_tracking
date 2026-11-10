@@ -1,6 +1,7 @@
 import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
   devIndicators: false,
+  outputFileTracingIncludes: {"/api/**": ["./.latex-runtime/tectonic", "./.latex-runtime/cache/**/*"]},
   poweredByHeader: false,
   async headers() {
     return [{ source: '/:path*', headers: [

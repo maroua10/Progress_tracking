@@ -1,3 +1,4 @@
+import {compileLatex} from '../lib/latex-compiler.mjs';
 import {PGlite} from '@electric-sql/pglite';
 import {build} from 'esbuild';
 import {readFile,readdir} from 'node:fs/promises';
@@ -12,7 +13,7 @@ export async function postgresFixture(workerSource){
  const db=createDatabase(execute,fn=>pg.transaction(tx=>fn(async(query,args)=>{const r=await tx.query(query,args);return {rows:r.rows,count:r.affectedRows || 0};})));
  const blobs=new Map();
  const bucket={async list({prefix=""}={}){return {objects:[...blobs.keys()].filter(key=>key.startsWith(prefix)).map(key=>({key}))};},async put(key,bytes){blobs.set(key,new Uint8Array(bytes));},async get(key){const b=blobs.get(key);return b?{body:b}:null;},async delete(key){blobs.delete(key);}};
- globalThis.__reperePostgresTest={DB:db,BUCKET:bucket};
+ globalThis.__reperePostgresTest={DB:db,BUCKET:bucket,LATEX:compileLatex};
  const module=await import('data:text/javascript;base64,'+Buffer.from(workerSource).toString('base64'));
  return {getD1Database:async()=>db,getR2Bucket:async()=>bucket,dispatchFetch:(url,init)=>module.default.fetch(new Request(url,init)),dispose:()=>pg.close()};
 }

@@ -1,6 +1,7 @@
 "use client";
 import {installPdfCompatibility} from "../lib/pdf-compatibility.mjs";
 import ActivityEditor from "./activity-editor";
+import ChapterVisualSummary from "./chapter-visual-summary";
 import ReportOverview from "./report-overview";
 import SkillQuickAdd from "./skill-quick-add";
 import {activityBundles,replaceActivityBundle} from "../lib/domain";
@@ -1139,10 +1140,9 @@ function ChapterDetail({chapter:c,data,teacher,onEditGrid,onAdopt,onState,onDele
   const [sub,setSub]=useState("overview");
   const preview=useContext(DocumentPreviewContext);
   const closure=(data.chapterReports || []).find((d:AnyData)=>d.chapterId===c.id && (!c.closedAt || d.closedAt===c.closedAt));
-  const frozen=c.state==='closed' && c.finalMetrics;
-  const m=frozen?c.finalMetrics:c.metrics;
+  const m=c.metrics;
   const currentSummary={id:'current-'+c.id,name:'Synthèse actuelle - '+c.title,url:'/api/chapters/'+c.id+'/summary?current=1',kind:'chapter'};
-  const shownGrid=frozen?(c.closureGrid || c.grid):c.grid;
+  const shownGrid=c.grid;
   const reports=data.reports.filter((r:AnyData)=>r.payload.chapterId===c.id);
   const docs=data.documents.filter((d:AnyData)=>reports.some((r:AnyData)=>r.payload.documentIds.includes(d.id)));
   return <section className="panel chapter-detail">
@@ -1152,7 +1152,7 @@ function ChapterDetail({chapter:c,data,teacher,onEditGrid,onAdopt,onState,onDele
     </div></div>
     <div className="tabs" role="group" aria-label="Rubriques du chapitre">{[['overview','Vue d’ensemble'],['skills','Compétences']].map(([id,label])=><button key={id} className={sub===id?'selected':''} onClick={()=>setSub(id)}>{label}</button>)}</div>
     <div className="chapter-tab-content">
-      {sub==='overview' && <><ChapterIndicators metrics={m}/><PerformanceCharts metrics={m}/><Chart metrics={m}/><ReferenceCard source={shownGrid.source} available={data.documents.some((d:AnyData)=>d.id===referenceDocument.id)}/></>}
+      {sub==='overview' && <><ChapterIndicators metrics={m}/><ChapterVisualSummary chapters={data.chapters} chapter={c} metrics={m} reports={reports}/><ReferenceCard source={shownGrid.source} available={data.documents.some((d:AnyData)=>d.id===referenceDocument.id)}/></>}
       {sub==='skills' && <><div className="section-line"><h3>Compétences</h3>{teacher && <button className="button small secondary" onClick={onEditGrid}>Modifier</button>}</div>{teacher && !c.grid.source.catalogueVersion && <button className="text-button" onClick={onAdopt}>Adopter la grille détaillée</button>}{teacher && <SkillQuickAdd chapterId={c.id} grid={c.currentGrid || c.grid} onAdded={async()=>{await onSkillAdded();}}/>}<SkillChecklist chapter={{...c,grid:c.grid,metrics:c.metrics}}/></>}
     </div>
   </section>;

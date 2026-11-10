@@ -47,3 +47,5 @@ yarn-error.log*
 # Share variable names, never live credentials
 !.env.example
 /.vercel/
+
+/.latex-runtime/

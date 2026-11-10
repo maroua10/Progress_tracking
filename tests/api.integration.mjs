@@ -1061,7 +1061,7 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
       const bytes=new Uint8Array(await downloaded.response.arrayBuffer());
       const doc=await PDFDocument.load(bytes);assert.ok(doc.getPageCount()>=2);
       const content=await pdfText(bytes);
-      for(const label of ['Synthèse','Progression du chapitre','Couverture','Résultats aux travaux notés','Compétences à la clôture']) assert.ok(content.includes(label),label);
+      for(const label of ['L’essentiel','Les chapitres','Le parcours','Les repères']) assert.ok(content.includes(label),label);
       assert.ok(!content.includes('SECRET'));
       const metadata=await db.prepare('SELECT * FROM chapter_reports WHERE id=?').bind(archived.id).first();
       assert.equal(metadata.size,bytes.length);assert.equal(metadata.sha256,createHash('sha256').update(bytes).digest('hex'));
@@ -1077,7 +1077,7 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
       const currentPath='chapters/'+archived.chapterId+'/summary?current=1';
       assert.equal((await call(currentPath,'GET',null,null)).status,401);
       const current=await call(currentPath,'GET',null,parentCookie);assert.equal(current.status,200);
-      const currentText=await pdfText(new Uint8Array(await current.response.arrayBuffer()));assert.ok(currentText.includes('Actualisé le'));assert.ok(currentText.includes('Compétences actuelles'));assert.ok(!currentText.includes('SECRET'));
+      const currentText=await pdfText(new Uint8Array(await current.response.arrayBuffer()));assert.ok(currentText.includes('Les repères'));assert.ok(currentText.includes('Le parcours'));assert.ok(!currentText.includes('SECRET'));
       const again=await call(path);assert.deepEqual(new Uint8Array(await again.response.arrayBuffer()),bytes);
       const partial=data.chapterReports.find(d=>d.chapterId==='second-degre');
       assert.ok(partial);if(partial){const result=await call(partial.url.replace('/api/',''));assert.equal(result.status,200);const text=await pdfText(new Uint8Array(await result.response.arrayBuffer()));assert.ok(text.includes('date non renseignée'));}

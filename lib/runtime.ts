@@ -20,6 +20,7 @@ function getDatabase() {
 }
 const bucket = () => adminClient().storage.from(process.env.SUPABASE_STORAGE_BUCKET || 'repere-private');
 export const env = {
+  LATEX: async (source:string,files:{name:string;bytes:Uint8Array}[]) => (await import("./latex-compiler.mjs")).compileLatex(source,files),
   get DB() { return getDatabase(); },
   BUCKET: {
     async put(key: string, bytes: Uint8Array | ArrayBuffer, options?: { httpMetadata?: { contentType?: string } }) {

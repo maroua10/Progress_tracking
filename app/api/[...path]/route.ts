@@ -1,4 +1,5 @@
 import { handle, ApiError, json } from "../../../lib/server";
+export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 async function route(
   request: Request,

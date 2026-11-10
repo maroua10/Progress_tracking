@@ -1,10 +1,12 @@
 import { PDFDocument, rgb, type PDFPage } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import { reportRegularFont, reportBoldFont } from "./report-fonts";
-import { performancePoints, type Skill } from "./domain";
+import { performancePoints, type Skill, type Report } from "./domain";
 export type ChapterSnapshot = {
   title: string; studentName: string; closedAt: string | null;
   currentAt?: string;
+  reports?: Pick<Report,"date"|"title"|"comment"|"summary">[];
+  comparisons?: {title:string;progression:number|null}[];
   grid: {skills: Skill[]; source: any}; metrics: any; partial: boolean;
 };
 let regularBytes: Uint8Array | undefined, boldBytes: Uint8Array | undefined;

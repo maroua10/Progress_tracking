@@ -308,8 +308,14 @@ async function chapterSnapshot(id: string, cutoff: string, dated: boolean): Prom
   if(!c) fail(404,"Chapitre introuvable.");
   const g=await one("SELECT * FROM grids WHERE chapter_id=? AND created_at<=? ORDER BY version DESC LIMIT 1",id,cutoff) || await one("SELECT * FROM grids WHERE chapter_id=? ORDER BY version LIMIT 1",id);
   const hidden=hiddenResources(await lifecycle(),"report");
+  const published=latestRevisions((await allRevisions()).filter(r=>!hidden.has(r.session_id)),cutoff);
+  const chapterReports=published.filter(r=>r.payload.chapterId===id);
+  const chapters=await rows("SELECT id,title FROM chapters WHERE student_id=?",studentId);
+  const allGrids=await rows("SELECT * FROM grids WHERE created_at<=? ORDER BY version",cutoff);
+  const comparisons=chapters.map(ch=>{const grid=allGrids.filter(g=>g.chapter_id===ch.id).at(-1);return{title:ch.title,progression:grid?metrics(published.filter(r=>r.payload.chapterId===ch.id),parse(grid.skills)).progression:null};});
   return {title:c.title,studentName:(await one("SELECT name FROM students WHERE id=?",studentId)).name,closedAt:dated?cutoff:null,partial:!!c.partial,
-    grid:{skills:parse(g.skills),source:parse(g.source)},metrics:metrics(latestRevisions((await allRevisions()).filter(r=>!hidden.has(r.session_id)),cutoff).filter(r=>r.payload.chapterId===id),parse(g.skills))};
+    reports:chapterReports.map(r=>({date:r.payload.date,title:r.payload.title,comment:r.payload.comment,summary:r.payload.summary})),comparisons,
+    grid:{skills:parse(g.skills),source:parse(g.source)},metrics:metrics(chapterReports,parse(g.skills))};
 }
 async function closureList(knownChapters?: Awaited<ReturnType<typeof rows>>, knownEvents?: Awaited<ReturnType<typeof rows>>) {
   const chapters=knownChapters || await rows("SELECT * FROM chapters WHERE student_id=?",studentId);
@@ -977,7 +983,10 @@ export async function handle(r: Request, path: string[]) {
   if(path[0]==="chapters" && path[1] && path[2]==="summary" && r.method==="GET") {
     if(new URL(r.url).searchParams.get("current")==="1") {
       const snapshot=await chapterSnapshot(path[1],now(),false);
-      const bytes=await (await import("./chapter-pdf")).renderChapterPdf({...snapshot,currentAt:now()});
+      const report=await (await import("./chapter-narrative")).buildChapterNarrative({...snapshot,currentAt:now()});
+      if(!env.LATEX) fail(503,"Le moteur LaTeX n’est pas disponible pour cet export.");
+      let bytes:Uint8Array;
+      try{bytes=await env.LATEX(report.source,report.files);}catch{fail(503,"Le rapport LaTeX n’a pas pu être composé. Réessayez dans quelques instants.");}
       await identity(r);
       return new Response(bytes as BodyInit,{headers:{"Content-Type":"application/pdf","Content-Disposition":"attachment; filename*=UTF-8''"+encodeURIComponent('Synthèse actuelle - '+snapshot.title+'.pdf'),"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}});
     }
@@ -993,7 +1002,9 @@ export async function handle(r: Request, path: string[]) {
     }
     if(!env.BUCKET) fail(503,"Le stockage des PDF n’est pas configuré.");
     if(!stored.storage_key) {
-      const bytes=await (await import("./chapter-pdf")).renderChapterPdf(parse(stored.payload)), key="chapter-reports/"+studentId+"/"+entry.id+"/"+uid()+".pdf";
+      const snapshot=parse(stored.payload);
+      const narrative=entry.closedAt && Array.isArray(snapshot.reports) ? await (await import("./chapter-narrative")).buildChapterNarrative(snapshot) : null;
+      const bytes=narrative ? await env.LATEX(narrative.source,narrative.files) : await (await import("./chapter-pdf")).renderChapterPdf(snapshot), key="chapter-reports/"+studentId+"/"+entry.id+"/"+uid()+".pdf";
       await env.BUCKET.put(key,bytes,{httpMetadata:{contentType:"application/pdf"}});
       const updated=await db().prepare("UPDATE chapter_reports SET storage_key=?,size=?,sha256=? WHERE id=? AND storage_key IS NULL").bind(key,bytes.length,await hash(bytes.buffer as ArrayBuffer),entry.id).run();
       if(!updated.meta.changes) await env.BUCKET.delete(key);
