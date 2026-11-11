@@ -1061,7 +1061,7 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
       const bytes=new Uint8Array(await downloaded.response.arrayBuffer());
       const doc=await PDFDocument.load(bytes);assert.ok(doc.getPageCount()>=2);
       const content=await pdfText(bytes);
-      for(const label of ['L’essentiel','Les chapitres','Le parcours','Les repères']) assert.ok(content.includes(label),label);
+      for(const label of ['L’essentiel','Les contrôles','Le parcours','Les repères']) assert.ok(content.includes(label),label);
       assert.ok(!content.includes('SECRET'));
       const metadata=await db.prepare('SELECT * FROM chapter_reports WHERE id=?').bind(archived.id).first();
       assert.equal(metadata.size,bytes.length);assert.equal(metadata.sha256,createHash('sha256').update(bytes).digest('hex'));

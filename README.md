@@ -79,7 +79,7 @@ Le programme officiel et sa référence sont conservés dans le projet ; les gri
 
 ## Rapports de chapitre en LaTeX
 
-La synthèse actuelle et les nouveaux bilans de clôture datés sont composés par Tectonic 0.17.0 : récit issu des commentaires publiés, disques par chapitre, répartition des acquis et notes des contrôles. Les anciennes archives restent inchangées. Les brouillons et notes privées sont exclus, et les textes sont échappés avant composition.
+La synthèse actuelle et les nouveaux bilans de clôture datés sont composés par Tectonic 0.17.0 : récit dans la voix de la professeure, résultats chiffrés, disques de réussite aux contrôles, répartition des acquis et notes d’origine. Chaque rapport reste limité au chapitre concerné. Les anciennes archives restent inchangées. Les brouillons et notes privées sont exclus, et les textes sont échappés avant composition.
 
 `npm run latex:setup` prépare le moteur et les ressources ; `npm run build` effectue cette préparation automatiquement. Le script télécharge le moteur officiel avec contrôle SHA-256 et précompile un document sans données réelles pour mettre les dépendances en cache. La compilation en production utilise ensuite uniquement ce cache, dans un répertoire temporaire isolé. Aucun service de composition externe ni clé supplémentaire n’est nécessaire.
 
