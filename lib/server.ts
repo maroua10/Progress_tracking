@@ -314,7 +314,7 @@ async function chapterSnapshot(id: string, cutoff: string, dated: boolean): Prom
   const allGrids=await rows("SELECT * FROM grids WHERE created_at<=? ORDER BY version",cutoff);
   const comparisons=chapters.map(ch=>{const grid=allGrids.filter(g=>g.chapter_id===ch.id).at(-1);return{title:ch.title,progression:grid?metrics(published.filter(r=>r.payload.chapterId===ch.id),parse(grid.skills)).progression:null};});
   return {title:c.title,studentName:(await one("SELECT name FROM students WHERE id=?",studentId)).name,closedAt:dated?cutoff:null,partial:!!c.partial,
-    reports:chapterReports.map(r=>({date:r.payload.date,title:r.payload.title,comment:r.payload.comment,summary:r.payload.summary})),comparisons,
+    reports:chapterReports.map(r=>({date:r.payload.date,title:r.payload.title,comment:r.payload.comment,summary:r.payload.summary,skills:r.payload.skills,activities:r.payload.activities})),comparisons,
     grid:{skills:parse(g.skills),source:parse(g.source)},metrics:metrics(chapterReports,parse(g.skills))};
 }
 async function closureList(knownChapters?: Awaited<ReturnType<typeof rows>>, knownEvents?: Awaited<ReturnType<typeof rows>>) {
@@ -975,6 +975,19 @@ export async function handle(r: Request, path: string[]) {
     try{await db().batch(statements);}catch{fail(409,"Le chapitre n’a pas pu être ajouté. Rechargez la liste avant de réessayer.");}
     return json({id},201);
   }
+  if(path[0]==="chapters" && path[1] && path[2]==="summary" && r.method==="POST") {
+    requireTeacher(actor);
+    const input=await body(r),entry=(await closureList()).find(e=>e.chapterId===path[1]&&(!input.closureId||e.id===input.closureId));
+    if(!entry?.closedAt)fail(400,"Choisissez un bilan de clôture daté.");
+    const requestKey=text(input.requestKey,80),reason=text(input.reason||"",1000).trim();
+    if(!/^[a-zA-Z0-9-]{8,80}$/.test(requestKey)||!reason)fail(400,"Précisez le motif de la correction.");
+    const id="edition-"+requestKey,old=await one("SELECT * FROM chapter_reports WHERE id=?",id);
+    if(old){if(old.student_id!==studentId||old.chapter_id!==path[1]||parse(old.payload).revisionOf!==entry.id)fail(409,"Identifiant de correction déjà utilisé.");return json({id,url:entry.url+"&edition="+id});}
+    const at=now(),snapshot=await chapterSnapshot(path[1],at,true);
+    snapshot.closedAt=entry.closedAt;snapshot.revisionOf=entry.id;snapshot.revisionReason=reason;
+    await db().prepare("INSERT OR IGNORE INTO chapter_reports (id,student_id,chapter_id,payload,created_at) VALUES (?,?,?,?,?)").bind(id,studentId,path[1],JSON.stringify(snapshot),at).run();
+    return json({id,url:entry.url+"&edition="+id});
+  }
   if(path[0]==="chapters" && path[1] && path[2]==="summary" && r.method==="GET") {
     if(new URL(r.url).searchParams.get("current")==="1") {
       const snapshot=await chapterSnapshot(path[1],now(),false);
@@ -998,22 +1011,34 @@ export async function handle(r: Request, path: string[]) {
     if(!env.BUCKET) fail(503,"Le stockage des PDF n’est pas configuré.");
     // Revised layouts are cached separately. The closure's original file,
     // observation snapshot and integrity metadata remain unchanged.
-    const frozenSnapshot=parse(stored.payload);
+    const layoutLatest=new URL(r.url).searchParams.get("layout")==="latest",editionId=new URL(r.url).searchParams.get("edition");
+    let edition=stored;
+    if(layoutLatest){
+      const editions=await rows("SELECT * FROM chapter_reports WHERE student_id=? AND chapter_id=? ORDER BY created_at DESC,id DESC",studentId,id);
+      const candidates=editions.filter(e=>parse(e.payload).revisionOf===entry.id);
+      if(editionId){edition=candidates.find(e=>e.id===editionId);if(!edition)fail(404,"Version du bilan introuvable.");}
+      else edition=candidates[0]||stored;
+    }
+    const frozenSnapshot=parse(edition.payload);
+    if(entry.closedAt && Array.isArray(frozenSnapshot.reports) && frozenSnapshot.reports.some((r:any)=>!r.activities)){
+      const original=await chapterSnapshot(id,edition.created_at,true);
+      frozenSnapshot.reports=frozenSnapshot.reports.map((r:any)=>{const history=original.reports?.find(h=>h.date===r.date&&h.title===r.title);return{...r,skills:r.skills||history?.skills,activities:r.activities||history?.activities};});
+    }
     const narrativeModule=entry.closedAt && Array.isArray(frozenSnapshot.reports) ? await import("./chapter-narrative") : null;
-    const layoutKey=narrativeModule ? "chapter-reports/"+studentId+"/"+entry.id+"/layout-"+narrativeModule.narrativeVersion+".pdf" : null;
+    const layoutKey=narrativeModule ? "chapter-reports/"+studentId+"/"+edition.id+"/layout-"+narrativeModule.narrativeVersion+".pdf" : null;
     async function cacheLayout(bytes:Uint8Array) {
       if(!layoutKey)return;
       try{await env.BUCKET.put(layoutKey,bytes,{httpMetadata:{contentType:"application/pdf"}});}catch(e){if(!await env.BUCKET.get(layoutKey))throw e;}
     }
     if(!stored.storage_key) {
-      const snapshot=frozenSnapshot;
+      const snapshot=parse(stored.payload);
       const narrative=narrativeModule ? await narrativeModule.buildChapterNarrative(snapshot) : null;
       const bytes=narrative ? await env.LATEX(narrative.source,narrative.files) : await (await import("./chapter-pdf")).renderChapterPdf(snapshot), key="chapter-reports/"+studentId+"/"+entry.id+"/"+uid()+".pdf";
       await env.BUCKET.put(key,bytes,{httpMetadata:{contentType:"application/pdf"}});
       const updated=await db().prepare("UPDATE chapter_reports SET storage_key=?,size=?,sha256=? WHERE id=? AND storage_key IS NULL").bind(key,bytes.length,await hash(bytes.buffer as ArrayBuffer),entry.id).run();
       if(!updated.meta.changes) await env.BUCKET.delete(key);
       stored=await one("SELECT * FROM chapter_reports WHERE id=? AND student_id=?",entry.id,studentId);
-      if(narrative)await cacheLayout(bytes);
+      if(narrative && edition.id===stored.id)await cacheLayout(bytes);
     }
     if(new URL(r.url).searchParams.get("layout")==="latest" && narrativeModule && layoutKey) {
       let file=await env.BUCKET.get(layoutKey);
@@ -1026,7 +1051,13 @@ export async function handle(r: Request, path: string[]) {
       }
       await identity(r);
       if(!file)fail(503,"Le PDF est temporairement indisponible.");
-      return new Response(file.body,{headers:{"Content-Type":"application/pdf","Content-Disposition":"attachment; filename*=UTF-8''"+encodeURIComponent(entry.name+'.pdf'),"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}});
+      let responseBody:BodyInit=file.body;
+      if(edition.id!==stored.id&&!edition.storage_key){
+        const bytes=new Uint8Array(await new Response(file.body).arrayBuffer());
+        await db().prepare("UPDATE chapter_reports SET storage_key=?,size=?,sha256=? WHERE id=? AND student_id=? AND storage_key IS NULL").bind(layoutKey,bytes.length,await hash(bytes.buffer as ArrayBuffer),edition.id,studentId).run();
+        responseBody=bytes as BodyInit;
+      }
+      return new Response(responseBody,{headers:{"Content-Type":"application/pdf","Content-Disposition":"attachment; filename*=UTF-8''"+encodeURIComponent(entry.name+'.pdf'),"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}});
     }
     await identity(r);
     const file=await env.BUCKET.get(stored.storage_key);if(!file) fail(503,"Le PDF est temporairement indisponible.");

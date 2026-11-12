@@ -1,7 +1,7 @@
 import {PDFDocument,StandardFonts,rgb,pushGraphicsState,popGraphicsState,setStrokingColor,setLineWidth,moveTo,appendBezierCurve,stroke} from 'pdf-lib';
 import type {ChapterSnapshot} from './chapter-pdf';
-import {chapterEditorial,friendlyObjective,pedagogicalJourney,shortDate} from './chapter-editorial.ts';
-export const narrativeVersion='repere-narrative-4';
+import {chapterEditorial,pedagogicalJourney,shortDate,curriculumReferences} from './chapter-editorial.ts';
+export const narrativeVersion='repere-narrative-5';
 export const reportColors={red:'#B55059',orange:'#C47427',yellow:'#D1AB27',blue:'#3975B7',green:'#32845A',teal:'#16847A',grey:'#D9DEE5'};
 export const texEscape=(v:unknown)=>String(v??'').normalize('NFC').replace(/[\x00-\x1f\x7f]/g,' ').replace(/[\\{}$&#%_^~]/g,c=>({'\\':'\\textbackslash{}','{':'\\{','}':'\\}','$':'\\$','&':'\\&','#':'\\#','%':'\\%','_':'\\_','^':'\\textasciicircum{}','~':'\\textasciitilde{}'}[c]!)).replace(/[Δ≠≤≥ℝ²ₙ]/g,c=>({'Δ':'\\ensuremath{\\Delta}','≠':'\\ensuremath{\\ne}','≤':'\\ensuremath{\\le}','≥':'\\ensuremath{\\ge}','ℝ':'\\ensuremath{\\mathrm{R}}','²':'\\ensuremath{{}^2}','ₙ':'\\ensuremath{{}_n}'}[c]!));
 const num=(n:number|null)=>n===null?'Non évalué':n.toLocaleString('fr-FR',{maximumFractionDigits:1});
@@ -14,7 +14,7 @@ export async function buildChapterNarrative(s:ChapterSnapshot){
  const m=s.metrics,editorial=chapterEditorial(s),reports=editorial.journey,goals=pedagogicalJourney(reports,s.title),E=texEscape;
  const core=s.grid.skills.filter(k=>k.origin!=='teacher'),objectives=core.length?core:s.grid.skills;
  const mastered=objectives.filter(k=>m.latest?.[k.id]?.level===100).length,evaluated=objectives.filter(k=>m.latest?.[k.id]!==undefined).length;
- const basics=s.grid.skills.filter(k=>k.origin==='teacher'),assets:{name:string;bytes:Uint8Array}[]=[];
+ const assets:{name:string;bytes:Uint8Array}[]=[];
  async function figure(name:string,width:number,height:number,draw:(p:any,font:any,bold:any)=>void){const pdf=await PDFDocument.create(),f=await pdf.embedFont(StandardFonts.Helvetica),b=await pdf.embedFont(StandardFonts.HelveticaBold),p=pdf.addPage([width,height]);draw(p,f,b);assets.push({name,bytes:await pdf.save()});}
  function text(p:any,f:any,value:string,x:number,y:number,size=10,ink='#172D47'){p.drawText(value,{x,y,size,font:f,color:color(ink)});}
  function arc(p:any,cx:number,cy:number,r:number,width:number,start:number,span:number,c:string){
@@ -32,16 +32,7 @@ export async function buildChapterNarrative(s:ChapterSnapshot){
   for(const n of [0,10,20]){p.drawLine({start:{x:left,y:bottom+h*n/20},end:{x:left+w,y:bottom+h*n/20},thickness:.5,color:color('#DDE4EC')});text(p,f,String(n),5,bottom+h*n/20-3,8,'#667383');}
   let previous:any;exams.forEach((a:any,i:number)=>{const point={x:left+(exams.length===1?w/2:w*i/(exams.length-1)),y:bottom+h*a.normalized/20};if(previous)p.drawLine({start:previous,end:point,thickness:2,color:color(reportColors.blue)});p.drawCircle({...point,size:3.4,color:color(a.normalized>=16?reportColors.green:a.normalized>=10?reportColors.blue:reportColors.orange)});text(p,b,num(a.normalized),point.x-9,point.y+8,9);text(p,f,shortDate(a.date),point.x-12,9,8,'#667383');previous=point;});
  });
- const applications=goals.find(g=>g.id==='applications'),applicationText=applications?.entries.map(e=>e.text).join(' ')||'';
- const hasOptimization=/optimis|aire maximale|recette maximale|aire.*maxim|prix.*maxim/i.test(applicationText);
- if(hasOptimization)await figure('problem-flow.pdf',520,150,(p,f,b)=>{
-  const examples=[/enclos|rectangle|aire/i.test(applicationText)?['Une aire à maximiser','Choisir les dimensions',reportColors.teal]:null,/recette|prix/i.test(applicationText)?['Une recette à maximiser','Choisir le prix',reportColors.orange]:null].filter(Boolean) as string[][];
-  examples.forEach((e,i)=>{const x=examples.length===1?125:i*264;p.drawRectangle({x,y:94,width:examples.length===1?270:256,height:49,color:color(i?'#FFF3E7':'#EAF5F2')});text(p,b,e[0],x+12,123,11,e[2]);text(p,f,e[1],x+12,105,10);});
-  const stages=[['Traduire la situation','Écrire la fonction'],['Chercher le maximum','Utiliser le sommet'],['Répondre au problème','Vérifier les valeurs possibles']];
-  stages.forEach((row,i)=>{const x=i*176;p.drawRectangle({x,y:18,width:168,height:54,color:color(['#EAF0FA','#FFF8E1','#EDF6EF'][i])});text(p,b,row[0],x+10,50,10,[reportColors.blue,reportColors.orange,reportColors.green][i]);text(p,f,row[1],x+10,31,9);if(i<2)p.drawLine({start:{x:x+168,y:45},end:{x:x+176,y:45},thickness:1.5,color:color('#98A7B7')});});
-  text(p,f,'Une autre lettre, le même raisonnement.',143,0,10,'#667383');
- });
- const groups=[...new Set(s.grid.skills.map(k=>k.group||'Autres notions'))].map(title=>{const skills=s.grid.skills.filter(k=>(k.group||'Autres notions')===title),measured=skills.filter(k=>m.latest?.[k.id]!==undefined),total=measured.reduce((n,k)=>n+(k.weight||1),0),average=total?measured.reduce((n,k)=>n+m.latest[k.id].level*(k.weight||1),0)/total:null;return{title:friendlyObjective(title),average,count:measured.length,total:skills.length,extra:skills.every(k=>k.origin==='teacher')};});
+ const groups=[...new Set(core.map(k=>k.group||'Autres notions'))].map(title=>{const skills=s.grid.skills.filter(k=>(k.group||'Autres notions')===title),measured=skills.filter(k=>m.latest?.[k.id]!==undefined),total=measured.reduce((n,k)=>n+(k.weight||1),0),average=total?measured.reduce((n,k)=>n+m.latest[k.id].level*(k.weight||1),0)/total:null;return{title,average,count:measured.length,total:skills.length,extra:skills.every(k=>k.origin==='teacher')};});
  if(groups.length)await figure('skills-overview.pdf',520,groups.length*21+4,(p,f,b)=>{
   groups.forEach((g,i)=>{const y=(groups.length-i-1)*21+7,ink=g.average===null?reportColors.grey:g.average===100?reportColors.green:g.average>=75?reportColors.blue:g.average>=50?reportColors.orange:reportColors.red;
    text(p,f,g.extra&&/calcul|fondamentaux/i.test(g.title)?'Les calculs de base':g.title,0,y,10);
@@ -50,9 +41,14 @@ export async function buildChapterNarrative(s:ChapterSnapshot){
   });
  });
  const period=reports.length?`Du ${shortDate(reports[0].date)} au ${shortDate(reports.at(-1)!.date)}`:'Bilan à compléter';
- const story=(goal:typeof goals[number])=>String.raw`\goal{${goal.color.slice(1)}}{${E(goal.title)}}`+'\n'+goal.entries.map(e=>String.raw`\entry{${E(shortDate(e.date))}}{${E(e.excerpt)}}`).join('\n');
- const openingGoals=goals.filter(g=>g.id!=='applications'&&g.id!=='attention'),closingGoals=goals.filter(g=>g.id==='applications'||g.id==='attention');
- const finalSentences=reports.at(-1)?.text.split(/(?<=[.!?])\s+/u)||[],followUp=finalSentences.find(t=>/^Pour (retrouver|la suite|les prochains)/i.test(t))||editorial.next;
+ const story=(goal:typeof goals[number])=>goal.entries.map((e,index)=>{
+  const refs=curriculumReferences(e,s.grid.skills);
+  const keepTogether=(e.excerpt+' '+refs.core.join(' ')+' '+refs.foundations.join(' ')).split(/\s+/).length<=400;
+  return (keepTogether?String.raw`\noindent\begin{minipage}{\linewidth}`:'')+(index===0?String.raw`\goal{${goal.color.slice(1)}}{${E(goal.title)}}`:'')+String.raw`\entry{${E(shortDate(e.date))}}{${E(e.excerpt)}}`+
+   (refs.core.length?String.raw`\skillref{Compétences du chapitre : }{${E(refs.core.join(' ; '))}.}`:'')+
+   (refs.foundations.length?String.raw`\skillref{Calcul algébrique : }{${E(refs.foundations.join(' ; '))}.}`:'')+
+   (refs.validation?String.raw`\skillref{Validation finale : }{L’ensemble des compétences du chapitre a été validé à l’issue des évaluations.}`:'')+(keepTogether?String.raw`\end{minipage}`:'')+String.raw`\par\medskip`;
+ }).join('\n');
  const source=String.raw`\documentclass[11pt,a4paper]{article}
 \usepackage[top=18mm,bottom=18mm,left=21mm,right=21mm]{geometry}
 \usepackage{fontspec,xcolor,graphicx,fancyhdr,tabularx,longtable,needspace}
@@ -63,27 +59,25 @@ export async function buildChapterNarrative(s:ChapterSnapshot){
 \pagestyle{fancy}\fancyhf{}\fancyhead[L]{\sffamily\bfseries\color{navy}REPÈRE}\fancyhead[R]{\sffamily\small\color{muted}BILAN PÉDAGOGIQUE}\fancyfoot[L]{\sffamily\scriptsize\color{muted}Suivi en mathématiques · ${E(shortDate(s.currentAt||s.closedAt||new Date().toISOString()))}}\fancyfoot[R]{\sffamily\scriptsize\thepage}\setlength{\headheight}{15pt}\setlength{\parindent}{0pt}\setlength{\parskip}{6pt}\renewcommand{\headrulewidth}{0.3pt}
 \newcommand{\sectiontitle}[1]{\par\Needspace{5\baselineskip}\vspace{8pt}{\sffamily\Large\bfseries\color{navy}#1}\par\vspace{3pt}}
 \newcommand{\goal}[2]{\par\Needspace{8\baselineskip}\vspace{9pt}{\sffamily\large\bfseries\textcolor[HTML]{#1}{#2}}\par\vspace{3pt}}
-\newcommand{\entry}[2]{\par\Needspace{4\baselineskip}\noindent{\sffamily\small\bfseries\color{blue}#1}\quad #2\par}
+\newcommand{\entry}[2]{\par\Needspace{8\baselineskip}\noindent{\sffamily\small\bfseries\color{blue}#1}\quad #2\par}
+\newcommand{\skillref}[2]{\par\noindent{\fontsize{9.5}{12}\selectfont\color{muted}\textbf{#1}#2}\par\vspace{3pt}}
 \begin{document}\color{navy}
 {\sffamily\Huge\bfseries ${E(s.title)}}\par
 {\sffamily\large ${E(s.studentName)}}\hfill{\sffamily\color{muted}${E(period)}}\par
-\sectiontitle{Où en est-elle aujourd'hui ?}
+\sectiontitle{Bilan du chapitre}
 ${E(editorial.conclusion||editorial.opening)}\par
 \begin{center}\colorbox{wash}{\parbox{0.94\linewidth}{\centering\sffamily\vspace{5pt}\textbf{${m.sessions} séances}\hspace{16pt}\textbf{${m.tds} TD distincts}\hspace{16pt}\textbf{${m.evaluations} évaluations}\vspace{5pt}}}\end{center}
 \begin{minipage}[c]{.47\linewidth}\sffamily\textbf{Les compétences du chapitre}\par
 \includegraphics[width=\linewidth,height=43mm,keepaspectratio]{objectives.pdf}\par
-{\small ${E(objectives.length?`${evaluated} compétences évaluées sur ${objectives.length}.`:'Pas encore évalué.')}}
+
 \end{minipage}\hfill\begin{minipage}[c]{.48\linewidth}\sffamily\textbf{Les résultats des contrôles}\par\medskip
-${exams.length?String.raw`{\Huge\bfseries\color{blue}${E(num(editorial.mean))}/20}\par Moyenne des ${exams.length} contrôle${exams.length>1?'s':''} noté${exams.length>1?'s':''}\par\bigskip {\Large\bfseries\color{green}${E(num(last.score))}/${E(num(last.scale))}}\par Dernier contrôle corrigé · ${E(shortDate(last.date))}\par\medskip {\small ${m.evaluations>exams.length?E(`${m.evaluations-exams.length} évaluation${m.evaluations-exams.length>1?'s':''} sans note renseignée.`):''}}`:'Aucune note renseignée.'}
+${exams.length?String.raw`{\Huge\bfseries\color{blue}${E(num(editorial.mean))}/20}\par Moyenne des ${exams.length} contrôle${exams.length>1?'s':''} noté${exams.length>1?'s':''}\par\bigskip {\Large\bfseries\color{green}${E(num(last.score))}/${E(num(last.scale))}}\par Dernier contrôle corrigé · ${E(shortDate(last.date))}`:'Aucune note renseignée.'}
 \end{minipage}\par\medskip
-${exams.length?String.raw`\sectiontitle{Les notes, au fil des contrôles}\includegraphics[width=\linewidth,height=43mm]{results.pdf}\par {\small\color{muted}Notes sur 20. Chaque point correspond à un contrôle corrigé.}`:''}
-${groups.length?String.raw`\sectiontitle{Les points travaillés}\includegraphics[width=\linewidth,height=${groups.length*6+2}mm,keepaspectratio]{skills-overview.pdf}\par {\small\color{muted}Derniers niveaux relevés dans les exercices.}`:''}
-${basics.length?String.raw`{\small\color{muted}Les calculs de base reprennent les repères des TD.}`:''}
-\clearpage\sectiontitle{Comment les méthodes se sont installées}
-${openingGoals.map(story).join('\n')||'Les premiers exercices permettront de préciser le travail à poursuivre.'}
-${closingGoals.length?String.raw`\clearpage\sectiontitle{Utiliser ses acquis dans des situations variées}`:''}
-${closingGoals.map(g=>story(g)+(g.id==='applications'&&hasOptimization?String.raw`\par\medskip\includegraphics[width=\linewidth,height=47mm,keepaspectratio]{problem-flow.pdf}\par`:'')).join('\n')}
-${followUp?String.raw`\sectiontitle{Pour les prochains contrôles}`+'\n'+E(followUp):''}
+${exams.length?String.raw`\sectiontitle{Résultats des contrôles, sur 20}\includegraphics[width=\linewidth,height=43mm]{results.pdf}`:''}
+${groups.length?String.raw`\sectiontitle{Synthèse des compétences}\includegraphics[width=\linewidth,height=${groups.length*6+2}mm,keepaspectratio]{skills-overview.pdf}`:''}
+
+\clearpage\sectiontitle{Parcours pédagogique}
+${goals.map(story).join('\n')||'Les premiers exercices permettront de préciser le travail à poursuivre.'}
 ${exams.some((x:any)=>x.scale!==20)?String.raw`\sectiontitle{Les notes dans leur barème d'origine}\begin{longtable}{@{}p{22mm}p{109mm}r@{}}\sffamily\bfseries Date & \sffamily\bfseries Contrôle & \sffamily\bfseries Note\\\hline\endfirsthead\sffamily\bfseries Date & \sffamily\bfseries Contrôle & \sffamily\bfseries Note\\\hline\endhead`+'\n'+exams.map((a:any)=>`${E(shortDate(a.date))} & ${E(a.title)} & ${E(num(a.score))}/${E(num(a.scale))} \\\\`).join('\n')+'\n\\end{longtable}':''}
 \end{document}`;
  return{source,files:assets};

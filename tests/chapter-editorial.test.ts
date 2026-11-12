@@ -1,4 +1,4 @@
-import{test}from'node:test';import assert from'node:assert/strict';import{chapterEditorial,parentWording,controlResults,pedagogicalJourney,shortDate}from'../lib/chapter-editorial.ts';
+import{test}from'node:test';import assert from'node:assert/strict';import{chapterEditorial,parentWording,controlResults,pedagogicalJourney,shortDate,curriculumReferences}from'../lib/chapter-editorial.ts';
 // Données entièrement fictives pour vérifier les calculs.
 const grades=[11,12,18,16,15,17];
 const snapshot:any={title:'Second degré',grid:{skills:[]},reports:[{date:'2020-01-18',title:'Bilan',comment:'Nous avons étudié les équations. Elle a obtenu 18/20.',summary:{nextStep:'Poursuivre les révisions du second degré tout en commençant les suites.'}}],metrics:{latest:{},performances:grades.map((score,i)=>({id:String(i),date:'2020-01-'+[4,8,12,14,14,18][i].toString().padStart(2,'0'),title:'Contrôle '+i,type:'evaluation',score,scale:20})),assessments:[]}};
@@ -16,4 +16,9 @@ test('Les séances sont regroupées par objectif, sans doublon ni réussite inve
 });
 test('Les dates sont courtes et la clôture est formulée au passé',()=>{
  assert.equal(shortDate('2020-10-03'),'3/10');assert.equal(shortDate('2020-12-31T23:30:00.000Z'),'1/01');assert.equal(parentWording('Je clôture le chapitre.','Second degré'),'on a clôturé le chapitre.');
+});
+test('Le référentiel de la séance conserve ses libellés et distingue travail et validation finale',()=>{
+ const skills=[{id:'sd-modele',label:'Libellé de la version utilisée'},{id:'sd-equation-justifier',label:'Démonstration non traitée'},{id:'sd-sommet',label:'Validation générale'}];
+ const entry:any={date:'2020-01-01',title:'Problème',text:'Un problème d’optimisation.',skills,activities:[{skillId:'sd-modele',exercises:''},{skillId:'sd-equation-justifier',exercises:'Complément non traité.'},{skillId:'sd-sommet',evidence:'Validation finale du chapitre.'}]};
+ const result=curriculumReferences(entry,[{id:'sd-modele',label:'Libellé modifié plus tard'}]);assert.ok(result.core.includes('Libellé de la version utilisée'));assert.ok(!result.core.includes('Libellé modifié plus tard'));assert.ok(!result.core.includes('Démonstration non traitée'));assert.ok(!result.core.includes('Validation générale'));assert.equal(result.validation,true);
 });

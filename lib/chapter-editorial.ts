@@ -1,4 +1,5 @@
 import type {ChapterSnapshot} from './chapter-pdf';
+import type {Activity,Skill} from './domain';
 
 const plain=(s:string)=>s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
 const easyWords: [RegExp,string][]=[
@@ -49,34 +50,39 @@ export const friendlyObjective=(title:string)=>({
 const n=(v:number)=>v.toLocaleString('fr-FR',{maximumFractionDigits:1});
 export const shortDate=(v:string)=>{const d=new Date(v.length===10?v+'T12:00:00Z':v),parts=new Intl.DateTimeFormat('fr-FR',{day:'numeric',month:'2-digit',timeZone:'Europe/Paris'}).formatToParts(d);return Number(parts.find(p=>p.type==='day')!.value)+'/'+parts.find(p=>p.type==='month')!.value;};
 const date=shortDate;
-type JourneyEntry={date:string;title:string;text:string;summary?:{objective?:string;strengths?:string;focus?:string;nextStep?:string}};
+type JourneyEntry={date:string;title:string;text:string;skills?:Skill[];activities?:Activity[];summary?:{objective?:string;strengths?:string;focus?:string;nextStep?:string}};
 export const pedagogicalGoals=[
- {id:'calculation',title:'Calculer juste, puis gagner en rapidité',color:'#C47427',description:'Signes, parenthèses, fractions : des réflexes qui servent dans tous les exercices.'},
- {id:'method',title:'Savoir comment commencer un exercice',color:'#3975B7',description:'Reconnaître la forme utile, choisir une méthode et aller au bout du raisonnement.'},
- {id:'applications',title:'Passer du problème aux mathématiques',color:'#16847A',description:'Relier une courbe, une formule et une situation concrète ; chercher un maximum.'},
- {id:'attention',title:'Garder le fil pendant un contrôle',color:'#B55059',description:'Des méthodes connues, à retrouver avec la même attention jusqu’à la dernière question.'},
+ {id:'calculation',title:'Fiabilité des calculs',color:'#172D47'},
+ {id:'method',title:'Choix des méthodes de résolution',color:'#172D47'},
+ {id:'applications',title:'Interprétation graphique et optimisation',color:'#172D47'},
+ {id:'attention',title:'Validation des acquis',color:'#172D47'},
 ];
-const sentences=(text:string)=>text.split(/(?<=[.!?])\s+/u).map(s=>s.trim()).filter(Boolean);
+const foundationFamilies=[
+ {ids:['ca-signes','ca-priorites','ca-parentheses'],label:'Gérer les signes, les parenthèses et les priorités de calcul'},
+ {ids:['ca-fractions'],label:'Effectuer les opérations sur les fractions'},
+ {ids:['ca-puissances'],label:'Appliquer les règles de calcul sur les puissances'},
+ {ids:['ca-termes','ca-polynomes','ca-variables'],label:'Réduire une expression littérale en regroupant les termes de même nature'},
+ {ids:['ca-simple','ca-double','ca-carre-somme','ca-carre-difference','ca-conjugues'],label:'Développer par distributivité et utiliser les identités remarquables'},
+ {ids:['ca-identites','ca-facteur-monome','ca-facteur-expression','ca-factoriser-fin'],label:'Factoriser à l’aide d’un facteur commun ou d’une identité remarquable'},
+ {ids:['ca-lineaires','ca-produit-nul'],label:'Résoudre une équation du premier degré ou un produit nul'},
+];
+export function curriculumReferences(entry:JourneyEntry,fallbackSkills:Skill[]=[]){
+ const activities=entry.activities||[],validation=activities.some(a=>/validation finale du chapitre/i.test(a.evidence||''));
+ const worked=activities.filter(a=>!/validation finale du chapitre/i.test(a.evidence||'')&&!/non trait[ée]|non r[ée]alis[ée]/i.test(a.exercises||''));
+ const ids=new Set(worked.map(a=>a.skillId)),skills=entry.skills||fallbackSkills;
+ const core=skills.filter(k=>ids.has(k.id)&&k.origin!=='teacher').map(k=>k.label);
+ const foundations=foundationFamilies.filter(g=>g.ids.some(id=>ids.has(id))).map(g=>g.label);
+ for(const skill of skills.filter(k=>ids.has(k.id)&&k.origin==='teacher'&&!k.id.startsWith('ca-')))foundations.push(skill.label);
+ if(ids.has('sd-formes-choisir')&&/plusieurs|encha[îi]n/i.test(entry.text)&&/identit[ée]s remarquables/i.test(entry.text)&&/discriminant/i.test(entry.text))core.unshift('Diversifier et articuler les stratégies de résolution : factorisation, identités remarquables et discriminant');
+ if((ids.has('sd-modele')||ids.has('sd-variations')||ids.has('sd-solution-contexte'))&&/optimis|aire maximale|recette maximale|aire.*maxim|prix.*maxim/i.test(entry.text))core.unshift('Choisir une forme adaptée à un problème d’optimisation et exploiter l’extremum');
+ return{core:[...new Set(core)],foundations:[...new Set(foundations)],validation};
+}
 export function pedagogicalJourney(entries:JourneyEntry[],chapter:string){
  const groups=pedagogicalGoals.map(g=>({...g,entries:[] as (JourneyEntry & {excerpt:string})[]}));
  for(const entry of entries){
   const heading=plain(/^(séance|bilan)?$/i.test(entry.title.trim())?entry.summary?.objective||entry.title:entry.title);
   const id=/final|concentration|fatigue|attention/.test(heading)?'attention':/optimis|probleme|enonce|graphique|modelis/.test(heading)?'applications':/fondament|calcul algeb|signes|fractions|rapidite/.test(heading)?'calculation':'method';
-  const parts=sentences(parentWording(entry.text,chapter));
-  // Keep the teacher's words. Select the learning purpose and the observation,
-  // rather than repeating the entire session report under another heading.
-  let chosen:string[];
-  if(id==='applications')chosen=parts.filter(s=>/optimis|enclos|aire|recette|graphi|prix|param[eè]tre|variable|lettre|minimum|maximum|perdre|compris|120|deux heures/i.test(s));
-  else if(id==='attention')chosen=parts.filter(s=>/20\/20|corrig[eé]|concentration|fatigue|signe|cl[oô]tur|dernier exercice/i.test(s));
-  else chosen=parts.filter(s=>/nous avons|elle |erreurs|difficult|but|objectif|\d+\s*\/\s*\d+|\d+\s*%/i.test(s));
-  if(!chosen.length)chosen=parts;
-  let selected=id==='applications'&&chosen.length>4?[...chosen.slice(0,2),...chosen.slice(-2)]:chosen.slice(0,id==='applications'?4:id==='attention'?4:2);
-  if((id==='calculation'||id==='method') && selected[0] && /^Nous avons/i.test(selected[0])){
-   const observation=parts.find(t=>/\belle\b|\d+\s*\/\s*\d+|\d+\s*%/i.test(t)&&t!==selected[0]);
-   if(observation)selected=[selected[0],observation];
-  }
-  if(/^Dans le (premier|second|deuxième)/i.test(selected[0]||'') && !selected.includes(parts[0]))selected.unshift(parts[0]);
-  const excerpt=selected.join(' ');
+  const excerpt=parentWording(entry.text,chapter);
   groups.find(g=>g.id===id)!.entries.push({...entry,excerpt});
  }
  return groups.filter(g=>g.entries.length);

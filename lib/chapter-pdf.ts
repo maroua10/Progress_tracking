@@ -5,7 +5,9 @@ import { performancePoints, type Skill, type Report } from "./domain";
 export type ChapterSnapshot = {
   title: string; studentName: string; closedAt: string | null;
   currentAt?: string;
-  reports?: Pick<Report,"date"|"title"|"comment"|"summary">[];
+  reports?: (Pick<Report,"date"|"title"|"comment"|"summary"> & Partial<Pick<Report,"skills"|"activities">>)[];
+  revisionOf?: string;
+  revisionReason?: string;
   comparisons?: {title:string;progression:number|null}[];
   grid: {skills: Skill[]; source: any}; metrics: any; partial: boolean;
 };
