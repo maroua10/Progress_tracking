@@ -532,19 +532,19 @@ export default function App() {
           <div className="sidebar-bottom">
             {teacher && (
               <button
-                aria-label="Accès parent"
+                aria-label="Accès de consultation"
                 className={"nav-item " + (tab === "access" ? "active" : "")}
                 onClick={() => setTab("access")}
               >
                 <Icon name="link" />
-                <span>Accès parent</span>
+                <span>Accès de consultation</span>
               </button>
             )}
             {data && <a className="nav-item" href="/auth/password"><Icon name="edit"/><span>Mon mot de passe</span></a>}
             {data && (
               <button
                 className="nav-item muted"
-                aria-label={teacher ? "Se déconnecter" : "Quitter la consultation parent"}
+                aria-label={teacher ? "Se déconnecter" : "Quitter la consultation"}
                 onClick={async () => {
                   try {
                     await fetch('/api/auth/logout',{method:'POST'});
@@ -575,7 +575,7 @@ export default function App() {
                 {data
                   ? teacher
                     ? "Espace professeur"
-                    : "Consultation parent"
+                    : "Espace de consultation"
                   : "Espace sécurisé"}
               </span>
               <span className="avatar">
@@ -610,7 +610,7 @@ export default function App() {
                           window.location.reload();
                         }}
                       >
-                        Quitter l’accès parent
+                        Quitter la consultation
                       </button>
                     </div>
                   </div>
@@ -1807,11 +1807,11 @@ function SessionEditor({
             </details>
             {draft.documentIds.some(docId=>!draft.activities.some(a=>a.documentIds?.includes(docId))) && <div className="editor-section"><h3>Autres supports du bilan</h3><div className="attachment-list">{draft.documentIds.filter(docId=>!draft.activities.some(a=>a.documentIds?.includes(docId))).map(docId=><div key={docId}><a href={"/api/documents/"+docId}>{loaded.documents.find((d:AnyData)=>d.id===docId)?.name || "Support PDF"}</a><button type="button" className="text-button" onClick={()=>patch({documentIds:draft.documentIds.filter(id=>id!==docId)})}>Retirer</button></div>)}</div></div>}
             <details className="form-details" open={!!draft.summary && Object.values(draft.summary).some(Boolean) || undefined}>
-              <summary>Synthèse pour le parent <span>facultatif</span></summary>
+              <summary>Synthèse de la séance <span>facultatif</span></summary>
               <div className="synthesis-form">{([["objective","Objectif de la séance"],["strengths","Points réussis"],["focus","À consolider"],["nextStep","Prochaine étape"]] as const).map(([key,label])=><label key={key}>{label}<textarea rows={2} maxLength={1200} value={draft.summary?.[key] || ""} onChange={e=>patch({summary:{objective:"",strengths:"",focus:"",nextStep:"",...draft.summary,[key]:e.target.value}})}/></label>)}</div>
             </details>
             <label className="editor-section">
-              Commentaire destiné au parent{" "}
+              Bilan partagé{" "}
               <span className="optional">facultatif</span>
               <textarea
                 rows={3}
@@ -1821,10 +1821,10 @@ function SessionEditor({
                 placeholder="Un complément factuel sur la séance."
               />
             </label>
-            <details className="form-details"><summary>Aperçu du bilan pour le parent</summary><ReportOverview report={draft}/>{draft.comment && <section className="report-comment"><h3>Commentaire</h3><p>{draft.comment}</p></section>}</details>
+            <details className="form-details"><summary>Aperçu du bilan partagé</summary><ReportOverview report={draft}/>{draft.comment && <section className="report-comment"><h3>Commentaire</h3><p>{draft.comment}</p></section>}</details>
             <label>
               Note privée du professeur{" "}
-              <span className="optional">jamais visible par le parent</span>
+              <span className="optional">visible uniquement par vous</span>
               <textarea
                 rows={2}
                 maxLength={4000}
@@ -2163,8 +2163,8 @@ function Dialogs({
           ? "Rouvrir pour révision"
           : "Commencer le chapitre",
     rename: "Prénom de l’élève",
-    grant: link ? "Lien de consultation créé" : "Créer un lien parent",
-    revoke: "Révoquer le lien parent",
+    grant: link ? "Lien de consultation créé" : "Créer un lien de consultation",
+    revoke: "Révoquer le lien de consultation",
     remove:
       d.kind === "sessions" ? "Supprimer la séance" : d.kind === "reports" ? "Supprimer le bilan" : "Supprimer le document",
   };
@@ -2212,7 +2212,7 @@ function Dialogs({
             (async () => {
               try {
                 const r = await api("grants", "POST", {
-                  label: value || "Parent",
+                  label: value || "Proche",
                 });
                 setLink(r.url);
               } catch (e) {
@@ -2255,7 +2255,7 @@ function Dialogs({
                 : d.resource.name}
             </h3>
             <p className="hint">
-              L’élément sera masqué pour le parent.{" "}
+              L’élément sera masqué dans l’espace de consultation.{" "}
               {["reports", "sessions"].includes(d.kind)
                 ? "Les statistiques du chapitre seront recalculées à partir des bilans restants."
                 : "Le fichier ne sera plus consultable depuis les bilans."}{" "}
@@ -2329,7 +2329,7 @@ function Dialogs({
                   : "Les observations précédentes sont conservées. De nouvelles séances peuvent être ajoutées."}
             </p>
             <label>
-              Note de contexte partagée avec le parent{" "}
+              Note de contexte partagée{" "}
               <span className="optional">facultatif</span>
               <textarea
                 rows={3}
@@ -2450,12 +2450,12 @@ function Dialogs({
                 <input
                   value={value}
                   onChange={(e) => setValue(e.target.value)}
-                  placeholder="Ex. Parent"
+                  placeholder="Ex. Proche"
                   maxLength={80}
                 />
               </label>
               <p>
-                Le parent consulte uniquement les données publiées. Vous pouvez
+                Cet accès permet de consulter uniquement les données publiées. Vous pouvez
                 révoquer le lien à tout moment.
               </p>
             </>
@@ -2621,7 +2621,7 @@ function TrashModal({ onClose, onChanged, notify }: AnyData) {
       <div className="dialog-form">
         <p className="hint">
           Les séances et fichiers retirés restent conservés. Une restauration
-          rend à nouveau les données publiées visibles au parent.
+          rend à nouveau les données publiées visibles dans l’espace de consultation.
         </p>
         {error && (
           <p className="error" role="alert">

@@ -2,7 +2,7 @@ import {PDFDocument, StandardFonts, rgb, pushGraphicsState, popGraphicsState, se
 import type {ChapterSnapshot} from './chapter-pdf';
 import {isoWeek} from './domain.ts';
 import {chapterEditorial, friendlyObjective, parentWording} from './chapter-editorial.ts';
-export const narrativeVersion='repere-narrative-2';
+export const narrativeVersion='repere-narrative-3';
 export const reportColors={red:'#C43B3B',orange:'#E48932',yellow:'#D6B426',blue:'#3975B7',green:'#32845A',grey:'#D9DEE5'};
 export const texEscape=(v:unknown)=>String(v??'').normalize('NFC').replace(/[\x00-\x1f\x7f]/g,' ').replace(/[\\{}$&#%_^~]/g,c=>({'\\':'\\textbackslash{}','{':'\\{','}':'\\}','$':'\\$','&':'\\&','#':'\\#','%':'\\%','_':'\\_','^':'\\textasciicircum{}','~':'\\textasciitilde{}'}[c]!)).replace(/[Δ≠≤≥ℝ²ₙ]/g,c=>({'Δ':'\\ensuremath{\\Delta}','≠':'\\ensuremath{\\ne}','≤':'\\ensuremath{\\le}','≥':'\\ensuremath{\\ge}','ℝ':'\\ensuremath{\\mathrm{R}}','²':'\\ensuremath{{}^2}','ₙ':'\\ensuremath{{}_n}'}[c]!));
 const num=(n:number|null)=>n===null?'Non évalué':n.toLocaleString('fr-FR',{maximumFractionDigits:1});
@@ -14,6 +14,7 @@ export function masteryDistribution(s:ChapterSnapshot){
 const color=(hex:string)=>rgb(parseInt(hex.slice(1,3),16)/255,parseInt(hex.slice(3,5),16)/255,parseInt(hex.slice(5,7),16)/255);
 export async function buildChapterNarrative(s:ChapterSnapshot){
  const m=s.metrics,dist=masteryDistribution(s),editorial=chapterEditorial(s),reports=editorial.journey;
+ const objectives=s.grid.skills.filter(k=>k.origin!=="teacher"),validatedObjectives=objectives.filter(k=>m.latest?.[k.id]?.level===100).length;
  const assets:{name:string;bytes:Uint8Array}[]=[];
  async function figure(name:string,width:number,height:number,draw:(page:any,font:any,bold:any)=>void){const pdf=await PDFDocument.create(),font=await pdf.embedFont(StandardFonts.Helvetica),bold=await pdf.embedFont(StandardFonts.HelveticaBold);const p=pdf.addPage([width,height]);draw(p,font,bold);assets.push({name,bytes:await pdf.save()});}
  function arc(p:any,cx:number,cy:number,r:number,width:number,start:number,span:number,c:string){
@@ -30,7 +31,7 @@ export async function buildChapterNarrative(s:ChapterSnapshot){
  const groups=new Map<string,typeof reports>();for(const r of reports){const key=isoWeek(r.date).monday;groups.set(key,[...(groups.get(key)||[]),r]);}
  const journey=[...groups.values()].map((rs,i)=>{
   const corpus=rs.map(r=>r.text).join(' ').toLowerCase();
-  const title=i===0?'Reprendre les bases':corpus.includes('fractions')?'Sécuriser les calculs et vérifier les acquis':corpus.includes('facteur commun')?'Choisir la bonne méthode et consolider les acquis':'Rendre les méthodes plus sûres';
+  const title=corpus.includes('concentration')?'Valider les méthodes et maintenir l’attention':i===0?'Reprendre les bases':corpus.includes('fractions')?'Sécuriser les calculs et vérifier les acquis':corpus.includes('facteur commun')?'Choisir la bonne méthode et consolider les acquis':'Rendre les méthodes plus sûres';
   return `\\phase{${E(title)}}\n`+rs.map((r,i)=>`\\textbf{Le ${E(day(r.date))}}. ${E(r.text)}${i%2===1?'\\par\n':' '}`).join('')+'\\par\n';
  }).join('\n');
  const skillGroups=[...new Set(s.grid.skills.map(k=>k.group||'Autres notions'))].map(title=>{const ks=s.grid.skills.filter(k=>(k.group||'Autres notions')===title),observed=ks.filter(k=>m.latest?.[k.id]!==undefined),average=observed.length?observed.reduce((n,k)=>n+m.latest[k.id].level*(k.weight||1),0)/observed.reduce((n,k)=>n+(k.weight||1),0):null;return{title:friendlyObjective(title),average,count:observed.length,total:ks.length};});
@@ -48,18 +49,20 @@ export async function buildChapterNarrative(s:ChapterSnapshot){
 \newcommand{\phase}[1]{\vspace{8pt}{\sffamily\bfseries\color{blue}#1}\par}
 \begin{document}\color{navy}
 {\sffamily\Huge\bfseries ${E(s.title)}}\par
+{\sffamily\large ${E(s.studentName)}}\par
 {\sffamily\color{muted}${E(period)}}\par
 \vspace{6pt}\sectiontitle{L'essentiel}
 ${E(editorial.opening)}\par
 ${E(editorial.controlSummary)} ${E(editorial.change)}\par
+${editorial.conclusion ? String.raw`\subsectiontitle{Le point en fin de période}`+'\n'+E(editorial.conclusion)+'\\par' : ''}
 \begin{center}\colorbox{wash}{\parbox{0.94\linewidth}{\centering\sffamily\vspace{5pt}\textbf{${m.sessions} séances}\hspace{18pt}\textbf{${m.tds} TD distincts}\hspace{18pt}\textbf{${m.evaluations} évaluations}\vspace{5pt}}}\end{center}
 \begin{minipage}[t]{.49\linewidth}\subsectiontitle{Les contrôles}\includegraphics[width=\linewidth,height=47mm,keepaspectratio]{controls.pdf}\end{minipage}\hfill\begin{minipage}[t]{.49\linewidth}\subsectiontitle{Les acquis du chapitre}\includegraphics[width=\linewidth,height=47mm,keepaspectratio]{distribution.pdf}\end{minipage}\par\medskip\noindent
 {\sffamily\small ${dist.filter(d=>d.count>0).map(d=>String.raw`\mbox{\textcolor[HTML]{${d.color.slice(1)}}{\rule{6pt}{6pt}} ${E(d.label)} : ${d.count}}`).join(String.raw`\quad `)} }\par
-${E(m.evaluated?`${m.mastered} notions sont bien installées. ${dist.find(d=>d.level===75)!.count} sont réussies sur les exercices classiques et ${dist.filter(d=>d.level!==null&&d.level<=50).reduce((v,d)=>v+d.count,0)} restent plus fragiles. ${m.total-m.evaluated} restent à vérifier.`:'Les premières observations permettront de préciser les acquis.')}\par
-${exams.length?`\\subsectiontitle{Les résultats aux évaluations}\n\\includegraphics[width=\\linewidth,height=38mm]{results.pdf}\n{\\small Les notes se lisent avec le niveau des sujets : un contrôle plus difficile peut donner une note plus basse.}`:''}
+${E(objectives.length && validatedObjectives===objectives.length ? `Les ${objectives.length} objectifs du chapitre sont validés.` : editorial.conclusion ? '' : m.evaluated ? `${m.mastered} notions sont bien installées.${m.total>m.evaluated?` ${m.total-m.evaluated} restent à vérifier.`:''}` : 'Les premières observations permettront de préciser les acquis.')}\par
+${exams.length?`\\subsectiontitle{Les résultats aux évaluations, sur 20}\n\\includegraphics[width=\\linewidth,height=38mm]{results.pdf}\n{\\small Les notes se lisent avec le niveau des sujets : un contrôle plus difficile peut donner une note plus basse.}`:''}
 \clearpage\sectiontitle{Le parcours d'apprentissage}
 ${journey||'Nous préciserons les acquis après les premiers exercices.'}
-\sectiontitle{Les prochaines priorités}
+\sectiontitle{Consolider la réussite}
 ${E(editorial.priority||parentWording(reports.at(-1)?.summary?.focus||'',s.title))}\par
 ${E(editorial.next)}
 \sectiontitle{Les repères, en détail}
@@ -67,7 +70,7 @@ ${E(editorial.next)}
 \renewcommand{\arraystretch}{1.35}\begin{tabularx}{\linewidth}{@{}Xrr@{}}\sffamily\bfseries Objectif & \sffamily\bfseries Niveau moyen & \sffamily\bfseries Évaluées\\\hline
 ${skillGroups.map(g=>`${E(g.title)} & ${E(num(g.average))}${g.average===null?'':' \\%'} & ${g.count}/${g.total} \\\\`).join('\n')}
 \end{tabularx}\par
-${exams.length?`\\subsectiontitle{Les notes d'origine}\n\\begin{longtable}{@{}p{27mm}p{104mm}r@{}}\\sffamily\\bfseries Séance & \\sffamily\\bfseries Évaluation & \\sffamily\\bfseries Note\\\\\\hline\n${exams.map((x:any)=>`${E(day(x.date))} & ${E(x.title)} & ${E(num(x.score))}/${E(num(x.scale))} \\\\`).join('\n')}\n\\end{longtable}`:''}
+${exams.some((x:any)=>x.scale!==20)?`\\Needspace{${Math.min(exams.length+3,12)}\\baselineskip}\\subsectiontitle{Les notes d'origine}\n\\begin{longtable}{@{}p{27mm}p{104mm}r@{}}\\sffamily\\bfseries Séance & \\sffamily\\bfseries Évaluation & \\sffamily\\bfseries Note\\\\\\hline\\endfirsthead\n\\sffamily\\bfseries Séance & \\sffamily\\bfseries Évaluation & \\sffamily\\bfseries Note\\\\\\hline\\endhead\n${exams.map((x:any)=>`${E(day(x.date))} & ${E(x.title)} & ${E(num(x.score))}/${E(num(x.scale))} \\\\`).join('\n')}\n\\end{longtable}`:''}
 \end{document}`;
  return{source,files:assets};
 }

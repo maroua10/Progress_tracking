@@ -84,7 +84,7 @@ export async function identity(r: Request) {
       "SELECT id,student_id FROM grants WHERE token_hash=? AND revoked_at IS NULL",
       await hash(p),
     );
-    if (!grant) fail(401, "Ce lien parent a été révoqué.");
+    if (!grant) fail(401, "Ce lien de consultation a été révoqué.");
     return {
       role: "parent",
       studentId: grant.student_id,
@@ -96,7 +96,7 @@ export async function identity(r: Request) {
   if (!userId) fail(401, "Connectez-vous pour accéder au suivi.");
   const owner = await one("SELECT user_id FROM owners WHERE id=?", "teacher");
   if (!owner || owner.user_id !== userId)
-    fail(403, "Cet espace est réservé au professeur et au parent invité.");
+    fail(403, "Cet espace est réservé aux comptes autorisés.");
   return { role: "teacher", studentId, userId, viewerKey: "teacher:" + userId };
 }
 export async function teacher(r: Request) {
@@ -105,7 +105,7 @@ export async function teacher(r: Request) {
   return actor;
 }
 function requireTeacher(actor: { role: string }) {
-  if (actor.role !== "teacher") fail(403, "L’accès parent est en lecture seule.");
+  if (actor.role !== "teacher") fail(403, "L’espace de consultation est en lecture seule.");
 }
 function checkOrigin(r: Request) {
   const origin = r.headers.get("origin");
@@ -567,25 +567,20 @@ async function prepareWeek(date: string) {
       chapters.find((c) => c.state === "revision") ||
       chapters[0];
     if (!chapter) return;
-    await db().batch(
-      [2, 5, 6].map((n) => {
-        const date = addDays(w.monday, n);
-        return db()
-          .prepare(
-            "INSERT OR IGNORE INTO sessions (id,student_id,origin_key,date,status,chapter_id,version,created_at,updated_at) VALUES (?,?,?,?,?,?,0,?,?)",
-          )
-          .bind(
-            uid(),
-            studentId,
-            "regular-" + date,
-            date,
-            "planned",
-            chapter.id,
-            now(),
-            now(),
-          );
-      }),
-    );
+    // Keep a rolling twelve-week calendar ready, including when a viewer opens
+    // the site first. A moved or deleted regular slot retains its origin key.
+    const start = isoWeek(todayParis()).monday;
+    const weeks = new Set([w.monday, ...Array.from({length:12}, (_, i) => addDays(start, i * 7))]);
+    const dates = [...weeks].flatMap(monday => [2, 5, 6].map(n => addDays(monday, n)));
+    const existing = await rows("SELECT date,origin_key FROM sessions WHERE student_id=? AND (date>=? OR origin_key>=?)", studentId, start, "regular-" + start);
+    const origins = new Set(existing.map(s => s.origin_key)), occupied = new Set(existing.map(s => s.date));
+    const missing = dates.filter(d => !origins.has("regular-" + d) && !occupied.has(d));
+    if (missing.length) {
+      const at = now();
+      await db().prepare(
+        "INSERT OR IGNORE INTO sessions (id,student_id,origin_key,date,status,chapter_id,version,created_at,updated_at) VALUES " + missing.map(() => "(?,?,?,?,?,?,0,?,?)").join(","),
+      ).bind(...missing.flatMap(d => [uid(),studentId,"regular-" + d,d,"planned",chapter.id,at,at])).run();
+    }
     return;
 }
 
@@ -676,7 +671,7 @@ export async function handle(r: Request, path: string[]) {
     const student = await one("SELECT * FROM students WHERE id=?", studentId);
     const context = { ...actor, needsSetup: !student && actor.role === "teacher", signedIn: true, accountLogin: !!resolveAccount, canReturnToTeacher: false };
     if (!student) return json({ context, data: null });
-    if (actor.role === "teacher") await prepareWeek(date);
+    await prepareWeek(date);
     return json({ context, data: await loadWorkspaceData(actor, date, student) });
   }
   if (route === "data" && r.method === "GET") {
@@ -1178,7 +1173,7 @@ export async function handle(r: Request, path: string[]) {
         uid(),
         studentId,
         await hash(token),
-        text(input.label || "Parent", 80),
+        text(input.label || "Proche", 80),
         now(),
       )
       .run();

@@ -276,8 +276,9 @@ export async function renderReportPdf(
   }
   if (topics.length) {
     addPage();
+    const writtenEvidence = new Set<string>();
     section("Détail des compétences de la séance");
-    write("Les niveaux ci-dessous concernent cette séance. Une estimation d’après la copie ne renseigne pas le degré d’aide reçu.", {size:8,color:colors.muted,gap:12});
+    write("Les niveaux ci-dessous concernent cette séance. Une estimation pédagogique ne renseigne pas le degré d’aide reçu.", {size:8,color:colors.muted,gap:12});
     for (const topic of topics) {
       ensure(46);
       write(topic.title, {size:9,strong:true,color:colors.teal,gap:8});
@@ -285,9 +286,12 @@ export async function renderReportPdf(
         for (const a of report.activities.filter(a=>a.skillId===skill.id)) {
         ensure(42);
         write(skill.label, {size:8.5,strong:true,gap:1});
-        write(a.level === null ? "Non évaluée" : `${a.level} %${a.estimated ? " - estimation d’après la copie" : a.level===100 ? " - Réussite observée sur les exercices travaillés" : ""}`, {size:8.5,color:a.level===100?colors.green:colors.lavender,gap:1});
+        write(a.level === null ? "Non évaluée" : `${a.level} %${a.estimated ? " - estimation pédagogique" : a.level===100 ? " - Réussite observée sur les exercices travaillés" : ""}`, {size:8.5,color:a.level===100?colors.green:colors.lavender,gap:1});
         if (a.workRef) write("Support : " + a.workRef, {size:8,color:colors.muted,gap:3});
-        if (a.evidence) write(a.evidence, {size:8,color:colors.muted,gap:3});
+        if (a.evidence && !writtenEvidence.has(a.evidence)) {
+          write(a.evidence, {size:8,color:colors.muted,gap:3});
+          writtenEvidence.add(a.evidence);
+        }
         if (a.exercises) write("Exercices : " + a.exercises, {size:8,color:colors.muted,gap:3});
         y -= 4;
         }

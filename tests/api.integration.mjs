@@ -1270,11 +1270,32 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
       assert.equal((await call('sessions/'+id+'/publish','POST',{version:saved.data.version,requestKey:'publish-synthesis'})).status,200);
       const parent=(await call('data','GET',null,parentCookie)).data.historyReports.find(r=>r.session_id===id);assert.deepEqual(parent.payload.summary,summary);assert.equal(parent.payload.privateNote,undefined);
       const pdf=await call('reports/'+id+'/pdf','GET',null,parentCookie);const bytes=new Uint8Array(await pdf.response.arrayBuffer());const text=await pdfText(bytes);
-      for(const value of Object.values(summary))assert.ok(text.includes(value));assert.ok(text.includes('estimation d’après la copie'));assert.ok(text.includes(report.activities[0].evidence));assert.ok(!text.includes('TEST SECRET PROF'));assert.ok(!text.includes('Durée : 2 h'));assert.ok(!text.includes('autonome confirmée'));
+      for(const value of Object.values(summary))assert.ok(text.includes(value));assert.ok(text.includes('estimation pédagogique'));assert.ok(text.includes(report.activities[0].evidence));assert.ok(!text.includes('TEST SECRET PROF'));assert.ok(!text.includes('Durée : 2 h'));assert.ok(!text.includes('autonome confirmée'));
       const edit=(await call('sessions/'+id)).data;const save=await call('sessions/'+id+'/draft','PUT',{report:{...edit.draft,summary:{...summary,focus:'TEST nouvelle précision'}},version:edit.session.version});
       assert.equal((await call('sessions/'+id+'/update','POST',{version:save.data.version,requestKey:'correct-synthesis',reason:'TEST précision'})).status,200);
       const historical=await call('reports/'+id+'/pdf?revision=1','GET',null,parentCookie);assert.deepEqual(new Uint8Array(await historical.response.arrayBuffer()),bytes);
       const versions=(await call('sessions/'+id)).data.revisions;assert.equal(versions.length,2);assert.equal(versions[0].payload.summary.focus,summary.focus);assert.equal(versions[1].payload.summary.focus,'TEST nouvelle précision');
+    });
+    await t.test("planning automatique en consultation : semaines ISO, déplacement et suppression sans doublons",async()=>{
+      const date=(new Date().getUTCFullYear()+1)+'-12-31';
+      const before=(await call('data')).data.chapters.map(c=>[c.id,c.metrics.sessions,c.metrics.tds,c.metrics.evaluations]);
+      const first=await call('workspace','POST',{date},parentCookie);assert.equal(first.status,200);
+      const slots=first.data.data.sessions;assert.equal(slots.length,3);
+      assert.deepEqual(slots.map(s=>new Date(s.date+'T12:00:00Z').getUTCDay()),[3,6,0]);
+      assert.ok(slots.every(s=>s.status==='planned' && !s.hasDraft && !s.report && !s.preview));
+      const again=await call('workspace','POST',{date},parentCookie);assert.deepEqual(again.data.data.sessions.map(s=>s.id),slots.map(s=>s.id));
+      assert.equal((await call('prepare','POST',{date},parentCookie)).status,403);
+      const wed=slots[0],editor=(await call('sessions/'+wed.id)).data,next=new Date(wed.date+'T12:00:00Z');next.setUTCDate(next.getUTCDate()+1);
+      assert.equal((await call('sessions/'+wed.id+'/schedule','POST',{date:next.toISOString().slice(0,10),status:'planned',version:editor.session.version})).status,200);
+      const moved=(await call('workspace','POST',{date},parentCookie)).data.data.sessions;
+      assert.equal(moved.length,3);assert.ok(!moved.some(s=>s.date===wed.date));assert.equal(moved.find(s=>s.id===wed.id).date,next.toISOString().slice(0,10));
+      assert.equal((await call('sessions/'+slots[1].id,'DELETE')).status,200);
+      assert.equal((await call('workspace','POST',{date},parentCookie)).data.data.sessions.length,2);
+      assert.equal((await call('sessions/'+slots[1].id+'/restore','POST',{})).status,200);
+      assert.equal((await call('workspace','POST',{date},parentCookie)).data.data.sessions.length,3);
+      const after=(await call('data')).data.chapters.map(c=>[c.id,c.metrics.sessions,c.metrics.tds,c.metrics.evaluations]);assert.deepEqual(after,before);
+      const future=new Date(today()+'T12:00:00Z');future.setUTCDate(future.getUTCDate()+56);
+      assert.equal((await call('data?date='+future.toISOString().slice(0,10),'GET',null,parentCookie)).data.sessions.length,3);
     });
   } finally {
     await mf.dispose();

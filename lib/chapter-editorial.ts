@@ -52,11 +52,12 @@ export function chapterEditorial(s:ChapterSnapshot){
  ['calcul','les bases du calcul'],['équations','la résolution des équations'],['forme canonique','la forme canonique'],['inéquations','les inéquations'],['problèmes','les problèmes']
  ].filter(([term])=>plain(corpus).includes(plain(term))).map(([,label])=>label);
  const opening=reports.length?topics.length?`Nous avons travaillé ${topics.slice(0,-1).join(', ')}${topics.length>1?' et ':''}${topics.at(-1)}.`:parentWording(reports[0].comment||reports[0].summary?.objective||reports[0].title,s.title):'Nous ferons le point après les premiers exercices.';
- const controlSummary=exams.length?`Sur ${exams.length} contrôle${exams.length>1?'s':''}, elle atteint au moins 15/20 ${successful} fois. Sa moyenne est de ${n(mean!)}/20 ; ses notes vont de ${n(Math.min(...exams.map((p:any)=>p.normalized)))} à ${n(Math.max(...exams.map((p:any)=>p.normalized)))}/20.`:'';
+ const controlSummary=exams.length?`Sur ${exams.length} contrôle${exams.length>1?'s':''} noté${exams.length>1?'s':''}, elle atteint au moins 15/20 ${successful} fois. Sa moyenne est de ${n(mean!)}/20 ; ses notes vont de ${n(Math.min(...exams.map((p:any)=>p.normalized)))} à ${n(Math.max(...exams.map((p:any)=>p.normalized)))}/20.`:'';
  const change=first&&last&&exams.length>1?`Elle obtient ${n(first.normalized)}/20 le ${date(first.date)}, puis ${n(last.normalized)}/20 le ${date(last.date)}${last.normalized>first.normalized?`, soit ${n(last.normalized-first.normalized)} points de plus`:''}.`:'';
  const weak=s.grid.skills.filter(k=>s.metrics.latest?.[k.id]!==undefined&&s.metrics.latest[k.id].level<=50);
- const priority=weak.length?`Je propose de reprendre en priorité les points suivants : ${weak.slice(0,3).map(k=>friendlyObjective(k.label).replace(/^./,c=>c.toLowerCase())).join(', ')}${weak.length>3?`, ainsi que ${weak.length-3} autre${weak.length-3>1?'s':''} point${weak.length-3>1?'s':''}`:''}.`:'';
  const lastReport=reports.at(-1);
+ const priority=parentWording(lastReport?.summary?.focus||'',s.title) || (weak.length?`Je propose de reprendre en priorité les points suivants : ${weak.slice(0,3).map(k=>friendlyObjective(k.label).replace(/^./,c=>c.toLowerCase())).join(', ')}${weak.length>3?`, ainsi que ${weak.length-3} autre${weak.length-3>1?'s':''} point${weak.length-3>1?'s':''}`:''}.`:'');
+ const conclusion=parentWording(lastReport?.summary?.strengths||'',s.title);
  const next=parentWording(lastReport?.summary?.nextStep||'',s.title).replace(/^Poursuivre/, 'Nous poursuivrons');
  const journey=reports.map(r=>{
   let text=parentWording(r.comment||r.summary?.objective||r.title,s.title);
@@ -68,5 +69,5 @@ export function chapterEditorial(s:ChapterSnapshot){
   if(timed){const seconds=Math.round(timed.minutes*60/timed.scale),duration=`${Math.floor(seconds/60)} min${seconds%60?' '+seconds%60+' s':''}`;text=text.replace(`${timed.minutes} minutes`,`${timed.minutes} minutes, soit ${duration} par équation en moyenne`);if(!text.includes(`${timed.score}/${timed.scale}`))text+=` Sur cette série d’équations, elle obtient ${timed.score}/${timed.scale}, soit ${n(100*timed.score/timed.scale)} % des points.`;}
   return{...r,text};
  });
- return{opening,controlSummary,change,mean,successful,exams,priority,next,journey};
+ return{opening,controlSummary,change,conclusion,mean,successful,exams,priority,next,journey};
 }

@@ -8,7 +8,7 @@ export async function uploadRoute(r:Request){
   if(r.headers.get('origin')!==new URL(r.url).origin)return json({error:'Requête non autorisée.'},403);
   const actor=await resolveAccount!();
   if(!actor)return json({error:'Connectez-vous.'},401);
-  if(actor.role!=='teacher')return json({error:'L’accès parent est en lecture seule.'},403);
+  if(actor.role!=='teacher')return json({error:'L’espace de consultation est en lecture seule.'},403);
   const input:any=await r.json(),bucket=adminClient().storage.from(process.env.SUPABASE_STORAGE_BUCKET || 'repere-private');
   if(input.operation==='prepare'){
    const session=await env.DB.prepare('SELECT id FROM sessions WHERE id=? AND student_id=?').bind(input.sessionId,actor.studentId).first();

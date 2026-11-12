@@ -20,7 +20,7 @@ export async function authRoute(r:Request,action:string){
   if(['register','invitations','signup'].includes(action))return response({error:'L’inscription publique est désactivée. Seuls les deux comptes autorisés peuvent se connecter.'},403);
   const client=await authClient();
   if(action==='google'&&r.method==='GET'){
-   if(url.searchParams.get('role')!=='teacher')return response({error:'Le compte parent utilise son identifiant et son mot de passe.'},403);
+   if(url.searchParams.get('role')!=='teacher')return response({error:'Le compte de consultation utilise son identifiant et son mot de passe.'},403);
    (await cookies()).set('repere_login_role','teacher',{httpOnly:true,sameSite:'lax',secure:url.protocol==='https:',maxAge:600,path:'/'});
    const {data,error}=await client.auth.signInWithOAuth({provider:'google',options:{redirectTo:siteUrl()+'/auth/callback',queryParams:{prompt:'select_account'},scopes:'openid email profile'}});
    return error||!data.url?redirect('/login?error=google',r):NextResponse.redirect(data.url,{headers:{'Cache-Control':'no-store'}});
@@ -55,9 +55,9 @@ export async function authRoute(r:Request,action:string){
    const reset=input.operation==='reset';
    const existing=await env.DB.prepare("SELECT login_name FROM account_slots WHERE role='parent'").first<any>();
    const username=reset?existing?.login_name:normalEmail(input.username||'parent');
-   if(!username)return response({error:'Le compte parent doit d’abord être créé.'},400);
+   if(!username)return response({error:'Le compte de consultation doit d’abord être créé.'},400);
    const credentials=await provisionFixedAccount(env.DB,adminClient(),{role:'parent',login:username,reset});
-   return response({ok:true,credentials,message:reset?'Nouveau mot de passe créé.':'Compte parent créé.'});
+   return response({ok:true,credentials,message:reset?'Nouveau mot de passe créé.':'Compte de consultation créé.'});
   }
   if(r.method!=='POST')return response({error:'Cette action est introuvable.'},404);
   if(action==='logout'){await client.auth.signOut();(await cookies()).delete('orbite_parent');return response({ok:true});}
