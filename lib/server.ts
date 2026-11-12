@@ -323,7 +323,7 @@ async function closureList(knownChapters?: Awaited<ReturnType<typeof rows>>, kno
   return chapters.flatMap(c=>[
     ...events.filter(e=>e.chapter_id===c.id).map(e=>({id:e.id,closedAt:e.recorded_at})),
     ...(c.initial_state==='closed'?[{id:'initial-'+c.id,closedAt:null}]:[])
-  ].map(e=>({id:e.id,chapterId:c.id,closedAt:e.closedAt,kind:'chapter',name:'Bilan de clôture - '+c.title+(e.closedAt?' - '+new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Paris',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(e.closedAt)):''),url:'/api/chapters/'+c.id+'/summary?closure='+encodeURIComponent(e.id)})));
+  ].map(e=>({id:e.id,chapterId:c.id,closedAt:e.closedAt,kind:'chapter',name:'Bilan de clôture - '+c.title+(e.closedAt?' - '+new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Paris',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(e.closedAt)):''),url:'/api/chapters/'+c.id+'/summary?closure='+encodeURIComponent(e.id)+(e.closedAt?'&layout=latest':'')})));
 }
 async function ensureDetailedGrids() {
   for (const p of programme) {
@@ -996,14 +996,37 @@ export async function handle(r: Request, path: string[]) {
       stored=await one("SELECT * FROM chapter_reports WHERE id=? AND student_id=?",entry.id,studentId);
     }
     if(!env.BUCKET) fail(503,"Le stockage des PDF n’est pas configuré.");
+    // Revised layouts are cached separately. The closure's original file,
+    // observation snapshot and integrity metadata remain unchanged.
+    const frozenSnapshot=parse(stored.payload);
+    const narrativeModule=entry.closedAt && Array.isArray(frozenSnapshot.reports) ? await import("./chapter-narrative") : null;
+    const layoutKey=narrativeModule ? "chapter-reports/"+studentId+"/"+entry.id+"/layout-"+narrativeModule.narrativeVersion+".pdf" : null;
+    async function cacheLayout(bytes:Uint8Array) {
+      if(!layoutKey)return;
+      try{await env.BUCKET.put(layoutKey,bytes,{httpMetadata:{contentType:"application/pdf"}});}catch(e){if(!await env.BUCKET.get(layoutKey))throw e;}
+    }
     if(!stored.storage_key) {
-      const snapshot=parse(stored.payload);
-      const narrative=entry.closedAt && Array.isArray(snapshot.reports) ? await (await import("./chapter-narrative")).buildChapterNarrative(snapshot) : null;
+      const snapshot=frozenSnapshot;
+      const narrative=narrativeModule ? await narrativeModule.buildChapterNarrative(snapshot) : null;
       const bytes=narrative ? await env.LATEX(narrative.source,narrative.files) : await (await import("./chapter-pdf")).renderChapterPdf(snapshot), key="chapter-reports/"+studentId+"/"+entry.id+"/"+uid()+".pdf";
       await env.BUCKET.put(key,bytes,{httpMetadata:{contentType:"application/pdf"}});
       const updated=await db().prepare("UPDATE chapter_reports SET storage_key=?,size=?,sha256=? WHERE id=? AND storage_key IS NULL").bind(key,bytes.length,await hash(bytes.buffer as ArrayBuffer),entry.id).run();
       if(!updated.meta.changes) await env.BUCKET.delete(key);
       stored=await one("SELECT * FROM chapter_reports WHERE id=? AND student_id=?",entry.id,studentId);
+      if(narrative)await cacheLayout(bytes);
+    }
+    if(new URL(r.url).searchParams.get("layout")==="latest" && narrativeModule && layoutKey) {
+      let file=await env.BUCKET.get(layoutKey);
+      if(!file){
+        try{
+          const layout=await narrativeModule.buildChapterNarrative(frozenSnapshot);
+          const bytes=await env.LATEX(layout.source,layout.files);
+          await cacheLayout(bytes);file=await env.BUCKET.get(layoutKey);
+        }catch{fail(503,"Le rapport n’a pas pu être composé. Réessayez dans quelques instants.");}
+      }
+      await identity(r);
+      if(!file)fail(503,"Le PDF est temporairement indisponible.");
+      return new Response(file.body,{headers:{"Content-Type":"application/pdf","Content-Disposition":"attachment; filename*=UTF-8''"+encodeURIComponent(entry.name+'.pdf'),"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}});
     }
     await identity(r);
     const file=await env.BUCKET.get(stored.storage_key);if(!file) fail(503,"Le PDF est temporairement indisponible.");

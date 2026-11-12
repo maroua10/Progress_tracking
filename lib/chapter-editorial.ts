@@ -13,9 +13,13 @@ const easyWords: [RegExp,string][]=[
  [/au contrôle précédent/g,'au contrôle de la séance précédente'],
  [/un trinôme/g,'une expression du second degré'],
  [/les racines/g,'les solutions'],
+ [/rendre les méthodes plus résistantes aux changements d’énoncé/g,'l’aider à garder ses repères quand l’énoncé change'],
 ];
 export function parentWording(value:string,chapter:string){
  let text=value.trim();
+ text=text.replace(/Les méthodes et les compétences du référentiel du ([^.]+) sont acquises\./gi,'Elle connaît les méthodes du $1 et sait les utiliser.');
+ text=text.replace(/Le premier contrôle final est réussi avec ([\d,.]+\/[\d,.]+) ; je clôture le chapitre\./gi,'Elle a obtenu $1 au premier contrôle final. On a clôturé le chapitre.');
+ text=text.replace(/je clôture le chapitre/gi,'on a clôturé le chapitre').replace(/je valide/gi,'on a validé').replace(/et clôture le chapitre/gi,'et on a clôturé le chapitre');
  if(plain(chapter).includes('second degre')){
   text=text.replace(/\s+(?:tout en|avant de)\s+[^.!?]*\bsuites?\b[^.!?]*([.!?]|$)/gi,'$1');
   text=text.split(/(?<=[.!?])\s+/u).filter(sentence=>!(/\b(?:les suites|suites num[ée]riques)\b/i.test(sentence))).join(' ');
@@ -43,7 +47,40 @@ export const friendlyObjective=(title:string)=>({
  'Poursuivre une factorisation jusqu’à obtenir des facteurs irréductibles dans le cas étudié':'terminer une factorisation',
 }[title]||title);
 const n=(v:number)=>v.toLocaleString('fr-FR',{maximumFractionDigits:1});
-const date=(v:string)=>new Intl.DateTimeFormat('fr-FR',{day:'numeric',month:'long',timeZone:'Europe/Paris'}).format(new Date(v+'T12:00:00Z'));
+export const shortDate=(v:string)=>{const d=new Date(v.length===10?v+'T12:00:00Z':v),parts=new Intl.DateTimeFormat('fr-FR',{day:'numeric',month:'2-digit',timeZone:'Europe/Paris'}).formatToParts(d);return Number(parts.find(p=>p.type==='day')!.value)+'/'+parts.find(p=>p.type==='month')!.value;};
+const date=shortDate;
+type JourneyEntry={date:string;title:string;text:string;summary?:{objective?:string;strengths?:string;focus?:string;nextStep?:string}};
+export const pedagogicalGoals=[
+ {id:'calculation',title:'Calculer juste, puis gagner en rapidité',color:'#C47427',description:'Signes, parenthèses, fractions : des réflexes qui servent dans tous les exercices.'},
+ {id:'method',title:'Savoir comment commencer un exercice',color:'#3975B7',description:'Reconnaître la forme utile, choisir une méthode et aller au bout du raisonnement.'},
+ {id:'applications',title:'Passer du problème aux mathématiques',color:'#16847A',description:'Relier une courbe, une formule et une situation concrète ; chercher un maximum.'},
+ {id:'attention',title:'Garder le fil pendant un contrôle',color:'#B55059',description:'Des méthodes connues, à retrouver avec la même attention jusqu’à la dernière question.'},
+];
+const sentences=(text:string)=>text.split(/(?<=[.!?])\s+/u).map(s=>s.trim()).filter(Boolean);
+export function pedagogicalJourney(entries:JourneyEntry[],chapter:string){
+ const groups=pedagogicalGoals.map(g=>({...g,entries:[] as (JourneyEntry & {excerpt:string})[]}));
+ for(const entry of entries){
+  const heading=plain(/^(séance|bilan)?$/i.test(entry.title.trim())?entry.summary?.objective||entry.title:entry.title);
+  const id=/final|concentration|fatigue|attention/.test(heading)?'attention':/optimis|probleme|enonce|graphique|modelis/.test(heading)?'applications':/fondament|calcul algeb|signes|fractions|rapidite/.test(heading)?'calculation':'method';
+  const parts=sentences(parentWording(entry.text,chapter));
+  // Keep the teacher's words. Select the learning purpose and the observation,
+  // rather than repeating the entire session report under another heading.
+  let chosen:string[];
+  if(id==='applications')chosen=parts.filter(s=>/optimis|enclos|aire|recette|graphi|prix|param[eè]tre|variable|lettre|minimum|maximum|perdre|compris|120|deux heures/i.test(s));
+  else if(id==='attention')chosen=parts.filter(s=>/20\/20|corrig[eé]|concentration|fatigue|signe|cl[oô]tur|dernier exercice/i.test(s));
+  else chosen=parts.filter(s=>/nous avons|elle |erreurs|difficult|but|objectif|\d+\s*\/\s*\d+|\d+\s*%/i.test(s));
+  if(!chosen.length)chosen=parts;
+  let selected=id==='applications'&&chosen.length>4?[...chosen.slice(0,2),...chosen.slice(-2)]:chosen.slice(0,id==='applications'?4:id==='attention'?4:2);
+  if((id==='calculation'||id==='method') && selected[0] && /^Nous avons/i.test(selected[0])){
+   const observation=parts.find(t=>/\belle\b|\d+\s*\/\s*\d+|\d+\s*%/i.test(t)&&t!==selected[0]);
+   if(observation)selected=[selected[0],observation];
+  }
+  if(/^Dans le (premier|second|deuxième)/i.test(selected[0]||'') && !selected.includes(parts[0]))selected.unshift(parts[0]);
+  const excerpt=selected.join(' ');
+  groups.find(g=>g.id===id)!.entries.push({...entry,excerpt});
+ }
+ return groups.filter(g=>g.entries.length);
+}
 export function chapterEditorial(s:ChapterSnapshot){
  const reports=(s.reports||[]).slice().sort((a,b)=>a.date.localeCompare(b.date)),exams=controlResults(s.metrics);
  const mean=exams.length?exams.reduce((sum:number,p:any)=>sum+p.normalized,0)/exams.length:null;

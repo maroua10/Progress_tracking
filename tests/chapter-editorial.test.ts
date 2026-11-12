@@ -1,4 +1,4 @@
-import{test}from'node:test';import assert from'node:assert/strict';import{chapterEditorial,parentWording,controlResults}from'../lib/chapter-editorial.ts';
+import{test}from'node:test';import assert from'node:assert/strict';import{chapterEditorial,parentWording,controlResults,pedagogicalJourney,shortDate}from'../lib/chapter-editorial.ts';
 // Données entièrement fictives pour vérifier les calculs.
 const grades=[11,12,18,16,15,17];
 const snapshot:any={title:'Second degré',grid:{skills:[]},reports:[{date:'2020-01-18',title:'Bilan',comment:'Nous avons étudié les équations. Elle a obtenu 18/20.',summary:{nextStep:'Poursuivre les révisions du second degré tout en commençant les suites.'}}],metrics:{latest:{},performances:grades.map((score,i)=>({id:String(i),date:'2020-01-'+[4,8,12,14,14,18][i].toString().padStart(2,'0'),title:'Contrôle '+i,type:'evaluation',score,scale:20})),assessments:[]}};
@@ -9,4 +9,11 @@ test('Un temps moyen n’est calculé que si le nombre d’équations est connu'
 test('Le bilan final conserve les acquis et priorités formulés par la professeure',()=>{
  const result=chapterEditorial({...snapshot,grid:{skills:[{id:'old',label:'Ancienne difficulté'}]},metrics:{...snapshot.metrics,latest:{old:{level:25}}},reports:[{...snapshot.reports[0],summary:{strengths:'Les méthodes du chapitre sont acquises.',focus:'La vigilance reste à maintenir dans la durée.',nextStep:'Prévoir un temps de relecture.'}}]});
  assert.equal(result.conclusion,'Les méthodes du chapitre sont acquises.');assert.equal(result.priority,'La vigilance reste à maintenir dans la durée.');assert.ok(!result.priority.includes('Ancienne difficulté'));
+});
+test('Les séances sont regroupées par objectif, sans doublon ni réussite inventée',()=>{
+ const reports=[{date:'2020-01-03',title:'Fondamentaux du calcul',text:'Nous avons repris les signes. Elle a corrigé deux erreurs.'},{date:'2020-01-04',title:'Problème d’optimisation',text:'Nous avons cherché une aire maximale. Elle hésite à écrire la fonction.'},{date:'2020-01-05',title:'Contrôle final',text:'Le deuxième contrôle n’a pas été corrigé. Elle a perdu sa concentration.'}];
+ const goals=pedagogicalJourney(reports,'Second degré');assert.deepEqual(goals.map(g=>g.id),['calculation','applications','attention']);assert.equal(goals.flatMap(g=>g.entries).length,3);assert.ok(goals[1].entries[0].excerpt.includes('aire maximale'));assert.ok(goals[2].entries[0].excerpt.includes('n’a pas été corrigé'));assert.ok(!goals.flatMap(g=>g.entries).some(e=>e.excerpt.includes('20/20')));
+});
+test('Les dates sont courtes et la clôture est formulée au passé',()=>{
+ assert.equal(shortDate('2020-10-03'),'3/10');assert.equal(shortDate('2020-12-31T23:30:00.000Z'),'1/01');assert.equal(parentWording('Je clôture le chapitre.','Second degré'),'on a clôturé le chapitre.');
 });
