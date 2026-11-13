@@ -3,7 +3,8 @@ import postgres from 'postgres';
 import {createClient} from '@supabase/supabase-js';
 import {mkdir,writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {generateAccessCode,migrateParentAccessCode} from '../lib/auth/access-code.mjs';
+import {generateAccessCode} from '../lib/auth/access-code.mjs';
+import {consultationCodeHash} from '../lib/auth/consultation-code.mjs';
 import {provisionFixedAccount} from '../lib/auth/provision.mjs';
 const {DATABASE_URL,NEXT_PUBLIC_SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY,TEACHER_EMAIL}=process.env;
 if(!DATABASE_URL||!NEXT_PUBLIC_SUPABASE_URL||!SUPABASE_SERVICE_ROLE_KEY||!TEACHER_EMAIL)throw new Error('Configurez DATABASE_URL, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY et TEACHER_EMAIL dans .env.local.');
@@ -22,7 +23,8 @@ try{
   }else if(existing?.enabled&&!args.includes('--reset-'+role)){
    console.log(role==='teacher'?'Compte professeur déjà configuré.':'Compte parent déjà configuré.');continue;
   }
-  credentials[role]=await provisionFixedAccount(database,admin,{role,login:role==='teacher'?email:(existing?await migrateParentAccessCode(database):generateAccessCode()),email:role==='teacher'?email:undefined,reset:args.includes('--reset-'+role)});
+  const login=role==='teacher'?email:generateAccessCode();
+  credentials[role]=await provisionFixedAccount(database,admin,{role,login,email:role==='teacher'?email:undefined,codeHash:role==='parent'?await consultationCodeHash(login,SUPABASE_SERVICE_ROLE_KEY):undefined,reset:args.includes('--reset-'+role)});
   await mkdir(path.dirname(file),{recursive:true,mode:0o700});
   await writeFile(file,JSON.stringify(credentials,null,2)+'\n',{mode:0o600});
   console.log(role==='teacher'?'Compte professeur configuré.':'Compte parent configuré.');

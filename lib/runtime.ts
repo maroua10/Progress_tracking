@@ -1,3 +1,5 @@
+import {cookies} from 'next/headers';
+import {CONSULTATION_COOKIE} from './auth/consultation-code.mjs';
 import postgres from 'postgres';
 import {accountForUser} from './auth/accounts';
 import type {Account} from './auth/policy';
@@ -38,5 +40,5 @@ export const env = {
 export const resolveAccount: (() => Promise<Account | null>) | undefined = async () => {
   const client = await authClient();
   const { data: { user }, error } = await client.auth.getUser();
-  return error ? null : accountForUser(user, env.DB);
+  return error ? null : accountForUser(user, env.DB,{value:(await cookies()).get(CONSULTATION_COOKIE)?.value,secret:process.env.SUPABASE_SERVICE_ROLE_KEY});
 };

@@ -1,7 +1,8 @@
-import {normalizeAccessCode,generateAccessCode,migrateParentAccessCode} from './access-code.mjs';
+import {consultationCodeHash,consultationSessionProof,equalDigest,CONSULTATION_COOKIE,CONSULTATION_MAX_AGE} from './consultation-code.mjs';
+import {normalizeAccessCode} from './access-code.mjs';
 import {NextResponse} from 'next/server';
 import {cookies} from 'next/headers';
-import {authClient,adminClient,siteUrl} from './supabase';
+import {authClient,adminClient,siteUrl,accessCodeSecret} from './supabase';
 import {env,resolveAccount} from '../runtime';
 import {normalEmail,validEmail,strongPassword,permitsRole,safeNext} from './policy';
 import {provisionFixedAccount} from './provision.mjs';
@@ -12,7 +13,7 @@ async function rateLimit(r:Request,login:string,action:string){
  const key=Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(ip+':'+login+':'+action))).toString('hex');
  const window=Math.floor(Date.now()/900000).toString();
  const row=await env.DB.prepare('INSERT INTO auth_attempts (key,"window",count) VALUES (?,?,1) ON CONFLICT(key,"window") DO UPDATE SET count=auth_attempts.count+1 RETURNING count').bind(key,window).first<any>();
- return row.count<=(action==='login'?15:4);
+ return row.count<=(['login','consultation-login'].includes(action)?15:4);
 }
 export async function authRoute(r:Request,action:string){
  try{
@@ -21,7 +22,7 @@ export async function authRoute(r:Request,action:string){
   if(['register','invitations','signup'].includes(action))return response({error:'L’inscription publique est désactivée. Seuls les deux comptes autorisés peuvent se connecter.'},403);
   const client=await authClient();
   if(action==='google'&&r.method==='GET'){
-   if(url.searchParams.get('role')!=='teacher')return response({error:'Le compte de consultation utilise son code d’accès et son mot de passe.'},403);
+   if(url.searchParams.get('role')!=='teacher')return response({error:'Le compte de consultation utilise son code d’accès.'},403);
    (await cookies()).set('repere_login_role','teacher',{httpOnly:true,sameSite:'lax',secure:url.protocol==='https:',maxAge:600,path:'/'});
    const {data,error}=await client.auth.signInWithOAuth({provider:'google',options:{redirectTo:siteUrl()+'/auth/callback',queryParams:{prompt:'select_account'},scopes:'openid email profile'}});
    return error||!data.url?redirect('/login?error=google',r):NextResponse.redirect(data.url,{headers:{'Cache-Control':'no-store'}});
@@ -43,7 +44,7 @@ export async function authRoute(r:Request,action:string){
    const actor=await resolveAccount!();if(!actor)return response({error:'Connectez-vous.'},401);
    if(actor.role!=='teacher')return response({error:'Cet accès est réservé au professeur.'},403);
    if(r.method==='GET'){
-    const parent=await env.DB.prepare("SELECT role AS id,login_name AS username,enabled,created_at,revoked_at FROM account_slots WHERE role='parent'").first();
+    const parent=await env.DB.prepare("SELECT role AS id,consultation_code_hash IS NOT NULL AS code_configured,enabled,created_at,revoked_at FROM account_slots WHERE role='parent'").first();
     return response({parents:parent?[parent]:[]});
    }
    const input:any=await r.json();
@@ -53,20 +54,33 @@ export async function authRoute(r:Request,action:string){
    }
    if(r.method!=='POST')return response({error:'Méthode non autorisée.'},405);
    if(!await rateLimit(r,'parent','provision'))return response({error:'Trop de demandes. Réessayez dans 15 minutes.'},429);
-   if(input.operation==='migrate-code'){const code=await migrateParentAccessCode(env.DB);return response({ok:true,code,message:'Code d’accès créé. Le mot de passe est conservé.'});}
-   const reset=input.operation==='reset';
-   const existing=await env.DB.prepare("SELECT login_name FROM account_slots WHERE role='parent'").first<any>();
-   if(reset&&!existing)return response({error:'Le compte de consultation doit d’abord être créé.'},400);
-   const username=existing?await migrateParentAccessCode(env.DB):generateAccessCode();
-   if(!username)return response({error:'Le compte de consultation doit d’abord être créé.'},400);
-   const credentials=await provisionFixedAccount(env.DB,adminClient(),{role:'parent',login:username,reset});
-   return response({ok:true,credentials,message:reset?'Nouveau mot de passe créé.':'Compte de consultation créé.'});
+   if(input.operation&&input.operation!=='set-code')return response({error:'Choisissez un nouveau code d’accès.'},400);
+   const code=normalizeAccessCode(input.accessCode);
+   if(!code||!/[a-z]/.test(code)||!/[0-9]/.test(code))return response({error:'Choisissez six lettres et chiffres, sous la forme ABC-123.'},400);
+   const existing=await env.DB.prepare("SELECT role FROM account_slots WHERE role='parent'").first();
+   const codeHash=await consultationCodeHash(code,accessCodeSecret());
+   if(!codeHash)return response({error:'Code d’accès invalide.'},400);
+   await provisionFixedAccount(env.DB,adminClient(),{role:'parent',login:code,codeHash,reset:!!existing});
+   return response({ok:true,code,message:'Code d’accès enregistré.'});
   }
   if(r.method!=='POST')return response({error:'Cette action est introuvable.'},404);
-  if(action==='logout'){await client.auth.signOut();(await cookies()).delete('orbite_parent');return response({ok:true});}
+  if(action==='logout'){await client.auth.signOut();(await cookies()).delete('orbite_parent');(await cookies()).delete(CONSULTATION_COOKIE);return response({ok:true});}
   const input:any=await r.json();
   if(action==='login'){
-   const login=input.role==='parent'?normalizeAccessCode(input.accessCode ?? input.identifier):normalEmail(input.identifier ?? input.email);
+   if(input.role==='parent'){
+    if(!await rateLimit(r,'consultation','consultation-login'))return response({error:'Trop de tentatives. Réessayez dans 15 minutes.'},429);
+    const hash=await consultationCodeHash(input.accessCode,accessCodeSecret());
+    const slot=await env.DB.prepare("SELECT role,email,user_id,consultation_code_hash FROM account_slots WHERE role='parent' AND enabled=1 AND revoked_at IS NULL").first<any>();
+    if(!slot?.user_id||!equalDigest(slot.consultation_code_hash,hash))return response({error:'Code d’accès incorrect.'},401);
+    const generated=await adminClient().auth.admin.generateLink({type:'magiclink',email:slot.email});
+    if(generated.error||generated.data.user?.id!==slot.user_id||!generated.data.properties?.hashed_token)return response({error:'La connexion est temporairement indisponible.'},503);
+    const verified=await client.auth.verifyOtp({token_hash:generated.data.properties.hashed_token,type:'magiclink'});
+    if(verified.error||verified.data.user?.id!==slot.user_id){await client.auth.signOut();return response({error:'La connexion est temporairement indisponible.'},503);}
+    (await cookies()).set(CONSULTATION_COOKIE,await consultationSessionProof(hash,slot.user_id,accessCodeSecret()),{httpOnly:true,sameSite:'lax',secure:url.protocol==='https:',path:'/',maxAge:CONSULTATION_MAX_AGE});
+    const account=await resolveAccount!();if(!permitsRole(account,'parent')){await client.auth.signOut();(await cookies()).delete(CONSULTATION_COOKIE);return response({error:'Cet accès n’est plus disponible.'},401);}
+    return response({ok:true,role:'parent'});
+   }
+   const login=normalEmail(input.identifier ?? input.email);
    if(!login||login.length>254||typeof input.password!=='string'||input.password.length>128)return response({error:'Accès ou mot de passe incorrect.'},400);
    if(!await rateLimit(r,login,'login'))return response({error:'Trop de tentatives. Réessayez dans 15 minutes.'},429);
    const slot=await env.DB.prepare('SELECT email,role FROM account_slots WHERE login_name=? AND enabled=1 AND revoked_at IS NULL').bind(login).first<any>();
@@ -77,7 +91,8 @@ export async function authRoute(r:Request,action:string){
    return response({ok:true,role:account!.role});
   }
   if(action==='password'){
-   if(!await resolveAccount!())return response({error:'Connectez-vous avec votre compte autorisé.'},401);
+   const actor=await resolveAccount!();if(!actor)return response({error:'Connectez-vous avec votre compte autorisé.'},401);
+   if(actor.role!=='teacher')return response({error:'La consultation utilise uniquement le code fourni par le professeur.'},403);
    if(!strongPassword(input.password))return response({error:'Choisissez un mot de passe entre 12 et 128 caractères.'},400);
    const {error}=await client.auth.updateUser({password:input.password});
    return error?response({error:'Le mot de passe n’a pas pu être enregistré. Réessayez.'},400):response({ok:true});

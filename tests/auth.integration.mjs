@@ -1,110 +1,38 @@
-import {test} from 'node:test';
-import assert from 'node:assert/strict';
-import {build} from 'esbuild';
-import {mkdir,writeFile,rm} from 'node:fs/promises';
-import {pathToFileURL} from 'node:url';
-import {postgresFixture} from './postgres-fixture.mjs';
-test('Deux comptes fixes — base PostgreSQL et fournisseur d’authentification isolés', {timeout:45000},async t=>{
+import{test}from'node:test';import assert from'node:assert/strict';import{build}from'esbuild';import{mkdir,writeFile,rm}from'node:fs/promises';import{pathToFileURL}from'node:url';import{postgresFixture}from'./postgres-fixture.mjs';
+test('Professeur par mot de passe, consultation par code uniquement — PostgreSQL et Auth isolés',{timeout:45000},async t=>{
  const fixture=await postgresFixture('export default {};'),db=globalThis.__reperePostgresTest.DB;
  const teacher={id:'11111111-1111-4111-8111-111111111111',email:'prof@exemple.fr',email_confirmed_at:'2026-11-07'},stranger={id:'33333333-3333-4333-8333-333333333333',email:'inconnu@exemple.fr',email_confirmed_at:'2026-11-07',user_metadata:{role:'teacher'}};
- const users=new Map([[teacher.email,{user:teacher,password:'Mot de passe professeur 2026'}],[stranger.email,{user:stranger,password:'Mot de passe inconnu 2026'}]]);
- for(const user of [teacher,stranger])await db.prepare('INSERT INTO auth.users (id,email) VALUES (?,?)').bind(user.id,user.email).run();
+ const users=new Map([[teacher.email,{user:teacher,password:'Mot de passe professeur 2026'}],[stranger.email,{user:stranger,password:'Mot de passe inconnu 2026'}]]),tokens=new Map(),cookieMap=new Map(),cookieOptions=new Map(),sent=[];
+ for(const user of[teacher,stranger])await db.prepare('INSERT INTO auth.users (id,email) VALUES (?,?)').bind(user.id,user.email).run();
  await db.prepare("INSERT INTO account_slots (role,user_id,email,login_name,enabled,created_at) VALUES ('teacher',?,?,?,1,?)").bind(teacher.id,teacher.email,teacher.email,'2026-11-07').run();
- const cookieMap=new Map(),sent=[],state={user:null,client:{auth:{
-  async getUser(){return {data:{user:state.user},error:null};},
-  async signInWithPassword({email,password}){const found=users.get(email);state.user=found?.password===password?found.user:null;return {error:state.user?null:{message:'invalid'}};},
-  async signOut(){state.user=null;return {error:null};},
-  async updateUser({password}){users.get(state.user.email).password=password;return {error:null};},
-  async resetPasswordForEmail(email,options){sent.push({email,options});return {error:null};},
-  async signInWithOAuth(options){state.oauth=options;return {data:{url:'https://accounts.google.com/o/oauth2/v2/auth?state=test'},error:null};},
-  async exchangeCodeForSession(code){state.user=code==='teacher'?teacher:stranger;return {error:null};},
-  async verifyOtp(){return {error:{message:'invalid'}};},
+ const state={user:null,generated:0,verified:0,created:0,wrongUser:false,failVerify:false,client:{auth:{
+  async getUser(){return{data:{user:state.user},error:null};},async signInWithPassword({email,password}){const found=users.get(email);state.user=found?.password===password?found.user:null;return{error:state.user?null:{message:'invalid'}};},async signOut(){state.user=null;return{error:null};},
+  async updateUser({password}){users.get(state.user.email).password=password;return{error:null};},async resetPasswordForEmail(email,options){sent.push({email,options});return{error:null};},
+  async signInWithOAuth(options){state.oauth=options;return{data:{url:'https://accounts.google.com/o/oauth2/v2/auth?state=test'},error:null};},async exchangeCodeForSession(code){state.user=code==='teacher'?teacher:stranger;return{error:null};},
+  async verifyOtp({token_hash,type}){state.verified++;const user=tokens.get(token_hash);tokens.delete(token_hash);if(state.failVerify||type!=='magiclink'||!user)return{data:{user:null},error:{message:'invalid'}};state.user=user;return{data:{user,session:{access_token:'isolated-session'}},error:null};},
  }},admin:{auth:{admin:{
-  async createUser({email,password}){const user={id:crypto.randomUUID(),email,email_confirmed_at:'2026-11-07'};await db.prepare('INSERT INTO auth.users (id,email) VALUES (?,?)').bind(user.id,email).run();users.set(email,{user,password});return {data:{user},error:null};},
-  async updateUserById(id,{password}){const found=[...users.values()].find(v=>v.user.id===id);if(!found)return {error:{message:'missing'}};found.password=password;return {error:null};},
- }}},cookies:{get:n=>cookieMap.has(n)?{value:cookieMap.get(n)}:undefined,set:(n,v)=>cookieMap.set(n,v),delete:n=>cookieMap.delete(n)}};
+  async createUser({email,password}){state.created++;const user={id:crypto.randomUUID(),email,email_confirmed_at:'2026-11-07'};await db.prepare('INSERT INTO auth.users (id,email) VALUES (?,?)').bind(user.id,email).run();users.set(email,{user,password});return{data:{user},error:null};},
+  async updateUserById(id,{password}){const found=[...users.values()].find(v=>v.user.id===id);found.password=password;return{error:null};},
+  async generateLink({type,email}){assert.equal(type,'magiclink');state.generated++;const user=users.get(email).user,token=crypto.randomUUID();tokens.set(token,user);return{data:{user:state.wrongUser?stranger:user,properties:{hashed_token:token}},error:null};},
+ }}},cookies:{get:n=>cookieMap.has(n)?{value:cookieMap.get(n)}:undefined,set:(n,v,options)=>{cookieMap.set(n,v);cookieOptions.set(n,options);},delete:n=>cookieMap.delete(n)}};
  globalThis.__authFixture=state;
- const built=await build({stdin:{contents:"export {authRoute} from './lib/auth/routes';export {handle,ApiError,parentExchange} from './lib/server';",resolveDir:process.cwd()},bundle:true,format:'esm',platform:'node',packages:'external',write:false,plugins:[{name:'isolated-auth-dependencies',setup(b){
-  b.onResolve({filter:/^(\.\.\/|\.\/)runtime$/},()=>({path:new URL('./auth-runtime.ts',import.meta.url).pathname}));
-  b.onResolve({filter:/^\.\/supabase$/},()=>({path:new URL('./auth-supabase.ts',import.meta.url).pathname}));
-  b.onResolve({filter:/^next\/server$/},()=>({path:'next/server.js',external:true}));
-  b.onResolve({filter:/^next\/headers$/},()=>({path:new URL('./auth-cookies.ts',import.meta.url).pathname}));
- }}]});
- await mkdir('work',{recursive:true});const file='work/fixed-auth-test-'+crypto.randomUUID()+'.mjs';await writeFile(file,built.outputFiles[0].text);
- const {authRoute,handle,ApiError,parentExchange}=await import(pathToFileURL(process.cwd()+'/'+file));
- const call=(action,method='POST',data={},origin='https://repere.test')=>authRoute(new Request('https://repere.test/auth/'+action,{method,headers:{origin,'Content-Type':'application/json'},...(method==='GET'?{}:{body:JSON.stringify(data)})}),action.split('?')[0]);
+ const built=await build({stdin:{contents:"export {authRoute} from './lib/auth/routes';export {handle,ApiError,parentExchange} from './lib/server';",resolveDir:process.cwd()},bundle:true,format:'esm',platform:'node',packages:'external',write:false,plugins:[{name:'isolated-auth',setup(b){b.onResolve({filter:/^(\.\.\/|\.\/)runtime$/},()=>({path:new URL('./auth-runtime.ts',import.meta.url).pathname}));b.onResolve({filter:/^\.\/supabase$/},()=>({path:new URL('./auth-supabase.ts',import.meta.url).pathname}));b.onResolve({filter:/^next\/server$/},()=>({path:'next/server.js',external:true}));b.onResolve({filter:/^next\/headers$/},()=>({path:new URL('./auth-cookies.ts',import.meta.url).pathname}));}}]});
+ await mkdir('work',{recursive:true});const file='work/code-auth-test-'+crypto.randomUUID()+'.mjs';await writeFile(file,built.outputFiles[0].text);const{authRoute,handle,ApiError,parentExchange}=await import(pathToFileURL(process.cwd()+'/'+file));
+ const call=(action,method='POST',data={},origin='https://repere.test',ip='203.0.113.2')=>authRoute(new Request('https://repere.test/auth/'+action,{method,headers:{origin,'Content-Type':'application/json','x-forwarded-for':ip},...(method==='GET'?{}:{body:JSON.stringify(data)})}),action.split('?')[0]);
  async function api(path,method='GET',body,headers={}){try{return await handle(new Request('https://repere.test/api/'+path,{method,headers:{origin:'https://repere.test','Content-Type':'application/json',...headers},...(body?{body:JSON.stringify(body)}:{})}),path.split('/'));}catch(e){return new Response(null,{status:e instanceof ApiError?e.status:500});}}
- let parent,credentials;
+ let parent;let code='AB3-Z9Q';
  try{
-  await t.test('Inscription professeur et parent publique désactivée, métadonnées et faux en-têtes ignorés',async()=>{
-   for(const action of ['register','signup','invitations'])assert.equal((await call(action,'POST',{role:'teacher',email:stranger.email})).status,403);
-   state.user=stranger;assert.equal((await api('data')).status,401);assert.equal((await api('setup','POST',{}, {'oai-authenticated-user-id':teacher.id})).status,401);
-   assert.equal((await call('parents')).status,401);assert.equal((await call('login','POST',{identifier:stranger.email,password:'Mot de passe inconnu 2026',role:'teacher'})).status,401);
-  });
-  await t.test('Le seul professeur autorisé peut initialiser le suivi',async()=>{
-   assert.equal((await call('login','POST',{identifier:teacher.email,password:'Mot de passe professeur 2026',role:'teacher'})).status,200);
-   assert.equal((await api('setup','POST',{name:'TEST — élève isolé'})).status,200);
-   assert.equal((await api('data')).status,200);
-  });
-  await t.test('Un seul parent, sans adresse à fournir, mot de passe généré et aucun e-mail envoyé',async()=>{
-   const created=await call('parents','POST',{username:'parent'});assert.equal(created.status,200);credentials=(await created.json()).credentials;
-   assert.match(credentials.username,/^[a-z0-9]{3}-[a-z0-9]{3}$/);assert.ok(credentials.password.length>=24);assert.equal(sent.length,0);
-   const slot=await db.prepare("SELECT * FROM account_slots WHERE role='parent'").first();parent=users.get(slot.email).user;
-   assert.equal(slot.user_id,parent.id);assert.equal(slot.enabled,1);
-   const listed=await(await call('parents','GET')).json();assert.equal(listed.parents[0].username,credentials.username);assert.equal(listed.parents[0].password,undefined);assert.equal(listed.parents[0].email,undefined);
-   assert.equal((await call('parents','POST',{username:'parent'})).status,409);
-   assert.equal((await db.prepare('SELECT count(*) AS count FROM account_slots').first()).count,2);
-  });
-  await t.test('Ancien identifiant remplacé par un code, sans toucher au mot de passe ni au compte',async()=>{
-   const old=await db.prepare("SELECT * FROM account_slots WHERE role='parent'").first();
-   await db.prepare("UPDATE account_slots SET login_name='parent' WHERE role='parent'").run();
-   const result=await call('parents','POST',{operation:'migrate-code'});assert.equal(result.status,200);credentials.username=(await result.json()).code;
-   const next=await db.prepare("SELECT * FROM account_slots WHERE role='parent'").first();assert.equal(next.user_id,old.user_id);assert.equal(next.email,old.email);assert.equal(next.enabled,old.enabled);assert.equal(users.get(next.email).password,credentials.password);
-   assert.match(credentials.username,/^[a-z0-9]{3}-[a-z0-9]{3}$/);
-   assert.equal((await call('login','POST',{accessCode:credentials.username.toUpperCase().replace('-',''),password:credentials.password,role:'parent'})).status,200);state.user=teacher;
-  });
-  await t.test('Le choix d’espace ne modifie pas le rôle et le parent reste en lecture seule',async()=>{
-   assert.equal((await call('login','POST',{accessCode:credentials.username,role:'parent'})).status,400);
-   assert.equal((await call('login','POST',{identifier:credentials.username,password:credentials.password,role:'teacher'})).status,401);
-   assert.equal((await call('login','POST',{accessCode:credentials.username,password:credentials.password,role:'parent'})).status,200);
-   assert.equal((await api('data')).status,200);assert.equal((await api('prepare','POST',{date:'2026-11-07'})).status,403);
-   const workspace=await api('workspace','POST',{date:'2026-11-07'});assert.equal(workspace.status,200);assert.equal((await workspace.json()).context.role,'parent');
-   for(const [path,method,data] of [['sessions','POST',{date:'2026-11-07',chapterId:'suites'}],['sessions/any','DELETE'],['sessions/any/restore','POST',{}],['trash','GET']])assert.equal((await api(path,method,data)).status,403);
-
-   assert.equal((await api('export')).status,403);assert.equal((await call('parents','POST',{username:'pirate'})).status,403);
-   assert.equal((await call('parents','DELETE',{id:'parent'})).status,403);
-  });
-  await t.test('Le parent change son propre mot de passe, sans modifier le compte professeur',async()=>{
-   assert.equal((await call('password','POST',{password:'court'})).status,400);
-   assert.equal((await call('password','POST',{password:'Nouveau mot de passe parent 2026',role:'teacher',userId:teacher.id})).status,200);
-   await call('logout');assert.equal((await call('login','POST',{accessCode:credentials.username,password:credentials.password,role:'parent'})).status,401);
-   assert.equal((await call('login','POST',{accessCode:credentials.username,password:'Nouveau mot de passe parent 2026',role:'parent'})).status,200);
-   assert.equal(users.get(teacher.email).password,'Mot de passe professeur 2026');
-  });
-  await t.test('Contrainte PostgreSQL : impossible d’ajouter un deuxième professeur',async()=>{
-   await assert.rejects(db.prepare("INSERT INTO account_slots (role,user_id,email,login_name,enabled,created_at) VALUES ('teacher',?,?,?,1,?)").bind(stranger.id,stranger.email,stranger.email,'2026-11-07').run());
-   state.user={...parent,email_confirmed_at:undefined};assert.equal((await api('data')).status,401);state.user=parent;
-  });
-  await t.test('Google réservé au professeur connu, comptes Google étrangers refusés',async()=>{
-   assert.equal((await call('google?role=parent','GET')).status,403);await call('google?role=teacher','GET');assert.equal(state.oauth.provider,'google');
-   assert.match((await call('callback?code=stranger','GET')).headers.get('location'),/error=forbidden/);
-   await call('google?role=teacher','GET');assert.equal(new URL((await call('callback?code=teacher','GET')).headers.get('location')).pathname,'/');
-  });
-  await t.test('Révocation immédiate et anciens liens sans compte désactivés, y compris pour les PDF',async()=>{
-   state.user=teacher;assert.equal((await call('parents','DELETE',{id:'parent'})).status,200);state.user=parent;
-   assert.equal((await api('data','GET',undefined,{'cookie':'orbite_parent='+ 'a'.repeat(64),'oai-authenticated-user-id':teacher.id})).status,401);
-   assert.equal((await api('reports/anything/pdf')).status,401);assert.equal((await api('documents/anything')).status,401);
-   const old=await parentExchange(new Request('https://repere.test/p/'+ 'a'.repeat(64)),'a'.repeat(64));assert.equal(old.status,303);assert.equal(old.headers.get('location'),'/login');
-  });
-  await t.test('Le professeur réinitialise le parent existant sans créer de troisième compte',async()=>{
-   state.user=teacher;const r=await call('parents','POST',{operation:'reset'});assert.equal(r.status,200);const reset=(await r.json()).credentials;
-   assert.equal(reset.username,credentials.username);assert.notEqual(reset.password,credentials.password);
-   assert.equal((await call('login','POST',{accessCode:credentials.username,password:reset.password,role:'parent'})).status,200);
-   assert.equal((await db.prepare('SELECT count(*) AS count FROM account_slots').first()).count,2);
-  });
-  await t.test('Origine externe refusée et tentatives répétées limitées',async()=>{
-   state.user=teacher;assert.equal((await call('parents','DELETE',{id:'parent'},'https://evil.test')).status,403);
-   let last;for(let i=0;i<16;i++)last=await call('login','POST',{identifier:'intrus',password:'invalid',role:'teacher'});assert.equal(last.status,429);
-  });
+  await t.test('Inscription publique et usurpation de rôle refusées',async()=>{for(const action of['register','signup','invitations'])assert.equal((await call(action,'POST',{role:'teacher',email:stranger.email})).status,403);state.user=stranger;assert.equal((await api('data')).status,401);assert.equal((await api('setup','POST',{}, {'oai-authenticated-user-id':teacher.id})).status,401);assert.equal((await call('parents')).status,401);});
+  await t.test('Le professeur conserve son mot de passe et son rôle',async()=>{assert.equal((await call('login','POST',{identifier:teacher.email,password:'Mot de passe professeur 2026',role:'teacher'})).status,200);assert.equal((await api('setup','POST',{name:'TEST — élève isolé'})).status,200);});
+  await t.test('Code défini par le professeur, stocké sous empreinte, sans mot de passe ni e-mail',async()=>{const r=await call('parents','POST',{operation:'set-code',accessCode:code});assert.equal(r.status,200);const data=await r.json();assert.equal(data.code,code.toLowerCase());assert.equal(data.password,undefined);assert.equal(data.credentials,undefined);assert.equal(sent.length,0);const slot=await db.prepare("SELECT * FROM account_slots WHERE role='parent'").first();parent=users.get(slot.email).user;assert.equal(slot.user_id,parent.id);assert.equal(slot.login_name,'consultation');assert.match(slot.consultation_code_hash,/^[a-f0-9]{64}$/);assert.ok(!JSON.stringify(slot).toLowerCase().includes(code.toLowerCase()));assert.equal(users.get(slot.email).password,undefined);const list=await(await call('parents','GET')).json();assert.equal(list.parents[0].code_configured,true);assert.equal(list.parents[0].consultation_code_hash,undefined);assert.equal(list.parents[0].email,undefined);assert.equal((await db.prepare('SELECT count(*) AS n FROM account_slots').first()).n,2);});
+  await t.test('Connexion sans mot de passe, preuve de session sécurisée et aucun secret dans la réponse',async()=>{await call('logout');const r=await call('login','POST',{accessCode:code.replace('-','').toLowerCase(),role:'parent'});assert.equal(r.status,200);assert.deepEqual(await r.json(),{ok:true,role:'parent'});assert.equal(state.generated,1);assert.equal(state.verified,1);const options=cookieOptions.get('repere_consultation');assert.equal(options.httpOnly,true);assert.equal(options.secure,true);assert.equal(options.sameSite,'lax');assert.equal(options.maxAge,8*60*60);assert.equal((await api('data')).status,200);});
+  await t.test('Consultation en lecture seule, code incapable de donner le rôle professeur',async()=>{for(const[path,method,body]of[['sessions','POST',{date:'2026-11-07',chapterId:'suites'}],['sessions/any','DELETE'],['prepare','POST',{date:'2026-11-07'}],['trash','GET'],['export','GET']])assert.equal((await api(path,method,body)).status,403);assert.equal((await call('parents','POST',{accessCode:'XX2-R9A'})).status,403);assert.equal((await call('password','POST',{password:'Parent ne change pas le mot de passe'})).status,403);assert.equal((await call('login','POST',{identifier:code,password:'any',role:'teacher'})).status,401);});
+  await t.test('Code erroné ou ancien mot de passe seul refusé avant tout appel au fournisseur',async()=>{await call('logout');const count=state.generated;assert.equal((await call('login','POST',{accessCode:'ZZ9-XX8',role:'parent'})).status,401);assert.equal((await call('login','POST',{identifier:'parent',password:'ancien',role:'parent'})).status,401);assert.equal(state.generated,count);assert.equal((await api('data')).status,401);});
+  await t.test('Réponse Auth incohérente ou vérification échouée : aucun accès',async()=>{state.wrongUser=true;const count=state.verified;assert.equal((await call('login','POST',{accessCode:code,role:'parent'})).status,503);assert.equal(state.verified,count);state.wrongUser=false;state.failVerify=true;assert.equal((await call('login','POST',{accessCode:code,role:'parent'})).status,503);state.failVerify=false;assert.equal((await api('data')).status,401);});
+  await t.test('Changer le code conserve le compte et invalide les anciennes sessions',async()=>{assert.equal((await call('login','POST',{accessCode:code,role:'parent'})).status,200);const oldProof=cookieMap.get('repere_consultation'),old=await db.prepare("SELECT * FROM account_slots WHERE role='parent'").first();state.user=teacher;code='X7A-C2B';assert.equal((await call('parents','POST',{operation:'set-code',accessCode:code})).status,200);const next=await db.prepare("SELECT * FROM account_slots WHERE role='parent'").first();assert.equal(next.user_id,old.user_id);assert.equal(next.email,old.email);assert.notEqual(next.consultation_code_hash,old.consultation_code_hash);state.user=parent;cookieMap.set('repere_consultation',oldProof);assert.equal((await api('data')).status,401);assert.equal(state.created,1);});
+  await t.test('Nouveau code accepté, ancien refusé ; une session fournisseur seule ne suffit pas',async()=>{state.user=parent;cookieMap.delete('repere_consultation');assert.equal((await api('data')).status,401);assert.equal((await call('login','POST',{accessCode:'AB3-Z9Q',role:'parent'})).status,401);assert.equal((await call('login','POST',{accessCode:code,role:'parent'})).status,200);assert.equal((await api('data')).status,200);});
+  await t.test('Révocation immédiate, y compris PDF ; réactivation réservée au professeur',async()=>{state.user=teacher;assert.equal((await call('parents','DELETE',{id:'parent'})).status,200);state.user=parent;for(const p of['data','reports/any/pdf','documents/any'])assert.equal((await api(p)).status,401);assert.equal((await call('login','POST',{accessCode:code,role:'parent'})).status,401);assert.equal((await parentExchange(new Request('https://repere.test/p/'+'a'.repeat(64)),'a'.repeat(64))).status,303);state.user=teacher;assert.equal((await call('parents','POST',{operation:'set-code',accessCode:code})).status,200);});
+  await t.test('Google et changement de mot de passe restent réservés au professeur',async()=>{assert.equal((await call('google?role=parent','GET')).status,403);await call('google?role=teacher','GET');assert.equal(state.oauth.provider,'google');assert.match((await call('callback?code=stranger','GET')).headers.get('location'),/error=forbidden/);await call('google?role=teacher','GET');assert.equal(new URL((await call('callback?code=teacher','GET')).headers.get('location')).pathname,'/');assert.equal((await call('password','POST',{password:'Nouveau mot de passe professeur 2026'})).status,200);assert.equal(users.get(teacher.email).password,'Nouveau mot de passe professeur 2026');});
+  await t.test('Origine externe et essais de codes variables limités par adresse IP',async()=>{assert.equal((await call('login','POST',{accessCode:code,role:'parent'},'https://evil.test')).status,403);for(let i=0;i<15;i++)assert.equal((await call('login','POST',{accessCode:'ZZ'+i.toString().padStart(4,'0'),role:'parent'},'https://repere.test','198.51.100.4')).status,401);assert.equal((await call('login','POST',{accessCode:code,role:'parent'},'https://repere.test','198.51.100.4')).status,429);});
  }finally{await fixture.dispose();await rm(file,{force:true});delete globalThis.__authFixture;}
 });

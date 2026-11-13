@@ -540,7 +540,7 @@ export default function App() {
                 <span>Accès de consultation</span>
               </button>
             )}
-            {data && <a className="nav-item" href="/auth/password"><Icon name="edit"/><span>Mon mot de passe</span></a>}
+            {data && teacher && <a className="nav-item" href="/auth/password"><Icon name="edit"/><span>Mon mot de passe</span></a>}
             {data && (
               <button
                 className="nav-item muted"

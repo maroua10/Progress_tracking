@@ -35,3 +35,5 @@ export function siteUrl() {
   if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') throw new Error('APP_URL doit utiliser HTTPS.');
   return url.origin;
 }
+
+export function accessCodeSecret(){const key=process.env.SUPABASE_SERVICE_ROLE_KEY;if(!key)throw new Error("Le service de connexion n’est pas configuré.");return key;}
