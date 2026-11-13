@@ -1,0 +1,5 @@
+import{test}from'node:test';import assert from'node:assert/strict';import{normalizeAccessCode,displayAccessCode,generateAccessCode,isStoredAccessCode}from'../lib/auth/access-code.mjs';
+test('Le code contient six lettres et chiffres, séparés en deux groupes de trois',()=>{for(let i=0;i<200;i++){const code=generateAccessCode();assert.match(code,/^[a-z0-9]{3}-[a-z0-9]{3}$/);assert.match(code,/[a-z]/);assert.match(code,/\d/);assert.equal(displayAccessCode(code),code.toUpperCase());}});
+test('La saisie accepte les deux casses et le code sans tiret, sans accepter un autre format',()=>{assert.equal(normalizeAccessCode(' aB3-z9Q '),'ab3-z9q');assert.equal(normalizeAccessCode('AB3Z9Q'),'ab3-z9q');for(const input of ['',null,123,'abc','ab-1234','ab3-z9qX','ab3.z9q'])assert.equal(normalizeAccessCode(input),'');});
+
+test('Un ancien identifiant de six lettres n’est pas confondu avec un code déjà attribué',()=>{assert.equal(isStoredAccessCode('parent'),false);assert.equal(isStoredAccessCode('abc-123'),true);});

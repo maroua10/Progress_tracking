@@ -8,7 +8,7 @@ Next.js 16 / React 19, PostgreSQL Supabase, Supabase Auth (mot de passe et Googl
 
 L’accès est réservé à **un seul professeur** et **un seul parent**. La table `account_slots` réserve un emplacement par rôle, protégé par clé primaire et identifiant utilisateur unique. Une inscription Supabase ou une métadonnée `role` n’accorde aucun accès. Les anciens liens sans compte sont désactivés.
 
-Le professeur se connecte avec son adresse e-mail. Le parent utilise un identifiant, par défaut `parent`, et un mot de passe. Il n’a aucune adresse e-mail à fournir : une adresse technique non distribuable est gérée uniquement par le serveur pour Supabase Auth, liée à l’identifiant utilisateur autorisé. Aucun e-mail n’est envoyé au parent. Il peut changer son mot de passe dans « Mon mot de passe ». Le professeur peut réinitialiser ce mot de passe ou révoquer l’accès depuis « Accès parent ».
+Le professeur se connecte avec son adresse e-mail. Le proche utilise un code d’accès aléatoire de six lettres et chiffres, présenté sous la forme `ABC-123`, et un mot de passe. Il n’a aucune adresse e-mail à fournir : une adresse technique non distribuable est gérée uniquement par le serveur pour Supabase Auth, liée à l’identifiant utilisateur autorisé. Aucun e-mail n’est envoyé au parent. Il peut changer son mot de passe dans « Mon mot de passe ». Le professeur peut réinitialiser ce mot de passe ou révoquer l’accès depuis « Accès ».
 
 ## Lancement
 
@@ -23,7 +23,7 @@ npm run auth:accounts
 npm run dev
 ```
 
-Ouvrir http://localhost:3000. La commande `auth:accounts` nécessite `TEACHER_EMAIL`, `PARENT_USERNAME` et la configuration Supabase. Elle crée les deux comptes par l’API d’administration avec des mots de passe aléatoires, sans envoyer d’e-mail. Les identifiants initiaux sont enregistrés uniquement dans `work/account-credentials.json`, avec accès local restreint (mode 0600), jamais dans Git ni les logs. Transmettre au parent ses seuls identifiants, puis conserver ces informations dans un endroit privé.
+Ouvrir http://localhost:3000. La commande `auth:accounts` nécessite `TEACHER_EMAIL` et la configuration Supabase. Elle crée les deux comptes par l’API d’administration avec des mots de passe aléatoires, sans envoyer d’e-mail. Les identifiants initiaux sont enregistrés uniquement dans `work/account-credentials.json`, avec accès local restreint (mode 0600), jamais dans Git ni les logs. Transmettre au parent ses seuls identifiants, puis conserver ces informations dans un endroit privé.
 
 Pour remplacer une ancienne adresse professeur, définir la nouvelle `TEACHER_EMAIL` puis lancer `npm run auth:accounts -- --role teacher --replace-teacher`. Le rôle est retiré à l’ancien compte ; ses données ne sont pas supprimées.
 

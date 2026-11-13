@@ -1,3 +1,4 @@
+import {normalizeAccessCode,generateAccessCode,migrateParentAccessCode} from './access-code.mjs';
 import {NextResponse} from 'next/server';
 import {cookies} from 'next/headers';
 import {authClient,adminClient,siteUrl} from './supabase';
@@ -20,7 +21,7 @@ export async function authRoute(r:Request,action:string){
   if(['register','invitations','signup'].includes(action))return response({error:'L’inscription publique est désactivée. Seuls les deux comptes autorisés peuvent se connecter.'},403);
   const client=await authClient();
   if(action==='google'&&r.method==='GET'){
-   if(url.searchParams.get('role')!=='teacher')return response({error:'Le compte de consultation utilise son identifiant et son mot de passe.'},403);
+   if(url.searchParams.get('role')!=='teacher')return response({error:'Le compte de consultation utilise son code d’accès et son mot de passe.'},403);
    (await cookies()).set('repere_login_role','teacher',{httpOnly:true,sameSite:'lax',secure:url.protocol==='https:',maxAge:600,path:'/'});
    const {data,error}=await client.auth.signInWithOAuth({provider:'google',options:{redirectTo:siteUrl()+'/auth/callback',queryParams:{prompt:'select_account'},scopes:'openid email profile'}});
    return error||!data.url?redirect('/login?error=google',r):NextResponse.redirect(data.url,{headers:{'Cache-Control':'no-store'}});
@@ -52,9 +53,11 @@ export async function authRoute(r:Request,action:string){
    }
    if(r.method!=='POST')return response({error:'Méthode non autorisée.'},405);
    if(!await rateLimit(r,'parent','provision'))return response({error:'Trop de demandes. Réessayez dans 15 minutes.'},429);
+   if(input.operation==='migrate-code'){const code=await migrateParentAccessCode(env.DB);return response({ok:true,code,message:'Code d’accès créé. Le mot de passe est conservé.'});}
    const reset=input.operation==='reset';
    const existing=await env.DB.prepare("SELECT login_name FROM account_slots WHERE role='parent'").first<any>();
-   const username=reset?existing?.login_name:normalEmail(input.username||'parent');
+   if(reset&&!existing)return response({error:'Le compte de consultation doit d’abord être créé.'},400);
+   const username=existing?await migrateParentAccessCode(env.DB):generateAccessCode();
    if(!username)return response({error:'Le compte de consultation doit d’abord être créé.'},400);
    const credentials=await provisionFixedAccount(env.DB,adminClient(),{role:'parent',login:username,reset});
    return response({ok:true,credentials,message:reset?'Nouveau mot de passe créé.':'Compte de consultation créé.'});
@@ -63,14 +66,14 @@ export async function authRoute(r:Request,action:string){
   if(action==='logout'){await client.auth.signOut();(await cookies()).delete('orbite_parent');return response({ok:true});}
   const input:any=await r.json();
   if(action==='login'){
-   const login=normalEmail(input.identifier ?? input.email);
-   if(!login||login.length>254||typeof input.password!=='string'||input.password.length>128)return response({error:'Identifiant ou mot de passe incorrect.'},400);
+   const login=input.role==='parent'?normalizeAccessCode(input.accessCode ?? input.identifier):normalEmail(input.identifier ?? input.email);
+   if(!login||login.length>254||typeof input.password!=='string'||input.password.length>128)return response({error:'Accès ou mot de passe incorrect.'},400);
    if(!await rateLimit(r,login,'login'))return response({error:'Trop de tentatives. Réessayez dans 15 minutes.'},429);
    const slot=await env.DB.prepare('SELECT email,role FROM account_slots WHERE login_name=? AND enabled=1 AND revoked_at IS NULL').bind(login).first<any>();
-   if(!slot||slot.role!==input.role)return response({error:'Identifiant ou mot de passe incorrect.'},401);
+   if(!slot||slot.role!==input.role)return response({error:'Accès ou mot de passe incorrect.'},401);
    const {error}=await client.auth.signInWithPassword({email:slot.email,password:input.password});
    const account=error?null:await resolveAccount!();
-   if(!permitsRole(account,input.role)){await client.auth.signOut();return response({error:'Identifiant ou mot de passe incorrect.'},401);}
+   if(!permitsRole(account,input.role)){await client.auth.signOut();return response({error:'Accès ou mot de passe incorrect.'},401);}
    return response({ok:true,role:account!.role});
   }
   if(action==='password'){

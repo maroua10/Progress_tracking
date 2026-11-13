@@ -48,17 +48,25 @@ test('Deux comptes fixes — base PostgreSQL et fournisseur d’authentification
   });
   await t.test('Un seul parent, sans adresse à fournir, mot de passe généré et aucun e-mail envoyé',async()=>{
    const created=await call('parents','POST',{username:'parent'});assert.equal(created.status,200);credentials=(await created.json()).credentials;
-   assert.equal(credentials.username,'parent');assert.ok(credentials.password.length>=24);assert.equal(sent.length,0);
+   assert.match(credentials.username,/^[a-z0-9]{3}-[a-z0-9]{3}$/);assert.ok(credentials.password.length>=24);assert.equal(sent.length,0);
    const slot=await db.prepare("SELECT * FROM account_slots WHERE role='parent'").first();parent=users.get(slot.email).user;
    assert.equal(slot.user_id,parent.id);assert.equal(slot.enabled,1);
-   const listed=await(await call('parents','GET')).json();assert.equal(listed.parents[0].username,'parent');assert.equal(listed.parents[0].password,undefined);assert.equal(listed.parents[0].email,undefined);
-   assert.equal((await call('parents','POST',{username:'parent2'})).status,409);
+   const listed=await(await call('parents','GET')).json();assert.equal(listed.parents[0].username,credentials.username);assert.equal(listed.parents[0].password,undefined);assert.equal(listed.parents[0].email,undefined);
    assert.equal((await call('parents','POST',{username:'parent'})).status,409);
    assert.equal((await db.prepare('SELECT count(*) AS count FROM account_slots').first()).count,2);
   });
+  await t.test('Ancien identifiant remplacé par un code, sans toucher au mot de passe ni au compte',async()=>{
+   const old=await db.prepare("SELECT * FROM account_slots WHERE role='parent'").first();
+   await db.prepare("UPDATE account_slots SET login_name='parent' WHERE role='parent'").run();
+   const result=await call('parents','POST',{operation:'migrate-code'});assert.equal(result.status,200);credentials.username=(await result.json()).code;
+   const next=await db.prepare("SELECT * FROM account_slots WHERE role='parent'").first();assert.equal(next.user_id,old.user_id);assert.equal(next.email,old.email);assert.equal(next.enabled,old.enabled);assert.equal(users.get(next.email).password,credentials.password);
+   assert.match(credentials.username,/^[a-z0-9]{3}-[a-z0-9]{3}$/);
+   assert.equal((await call('login','POST',{accessCode:credentials.username.toUpperCase().replace('-',''),password:credentials.password,role:'parent'})).status,200);state.user=teacher;
+  });
   await t.test('Le choix d’espace ne modifie pas le rôle et le parent reste en lecture seule',async()=>{
-   assert.equal((await call('login','POST',{identifier:'parent',password:credentials.password,role:'teacher'})).status,401);
-   assert.equal((await call('login','POST',{identifier:'parent',password:credentials.password,role:'parent'})).status,200);
+   assert.equal((await call('login','POST',{accessCode:credentials.username,role:'parent'})).status,400);
+   assert.equal((await call('login','POST',{identifier:credentials.username,password:credentials.password,role:'teacher'})).status,401);
+   assert.equal((await call('login','POST',{accessCode:credentials.username,password:credentials.password,role:'parent'})).status,200);
    assert.equal((await api('data')).status,200);assert.equal((await api('prepare','POST',{date:'2026-11-07'})).status,403);
    const workspace=await api('workspace','POST',{date:'2026-11-07'});assert.equal(workspace.status,200);assert.equal((await workspace.json()).context.role,'parent');
    for(const [path,method,data] of [['sessions','POST',{date:'2026-11-07',chapterId:'suites'}],['sessions/any','DELETE'],['sessions/any/restore','POST',{}],['trash','GET']])assert.equal((await api(path,method,data)).status,403);
@@ -69,8 +77,8 @@ test('Deux comptes fixes — base PostgreSQL et fournisseur d’authentification
   await t.test('Le parent change son propre mot de passe, sans modifier le compte professeur',async()=>{
    assert.equal((await call('password','POST',{password:'court'})).status,400);
    assert.equal((await call('password','POST',{password:'Nouveau mot de passe parent 2026',role:'teacher',userId:teacher.id})).status,200);
-   await call('logout');assert.equal((await call('login','POST',{identifier:'parent',password:credentials.password,role:'parent'})).status,401);
-   assert.equal((await call('login','POST',{identifier:'parent',password:'Nouveau mot de passe parent 2026',role:'parent'})).status,200);
+   await call('logout');assert.equal((await call('login','POST',{accessCode:credentials.username,password:credentials.password,role:'parent'})).status,401);
+   assert.equal((await call('login','POST',{accessCode:credentials.username,password:'Nouveau mot de passe parent 2026',role:'parent'})).status,200);
    assert.equal(users.get(teacher.email).password,'Mot de passe professeur 2026');
   });
   await t.test('Contrainte PostgreSQL : impossible d’ajouter un deuxième professeur',async()=>{
@@ -90,8 +98,8 @@ test('Deux comptes fixes — base PostgreSQL et fournisseur d’authentification
   });
   await t.test('Le professeur réinitialise le parent existant sans créer de troisième compte',async()=>{
    state.user=teacher;const r=await call('parents','POST',{operation:'reset'});assert.equal(r.status,200);const reset=(await r.json()).credentials;
-   assert.equal(reset.username,'parent');assert.notEqual(reset.password,credentials.password);
-   assert.equal((await call('login','POST',{identifier:'parent',password:reset.password,role:'parent'})).status,200);
+   assert.equal(reset.username,credentials.username);assert.notEqual(reset.password,credentials.password);
+   assert.equal((await call('login','POST',{accessCode:credentials.username,password:reset.password,role:'parent'})).status,200);
    assert.equal((await db.prepare('SELECT count(*) AS count FROM account_slots').first()).count,2);
   });
   await t.test('Origine externe refusée et tentatives répétées limitées',async()=>{

@@ -2545,13 +2545,8 @@ function SkillChecklist({ chapter: c }: AnyData) {
                   </span>
                   <div className="task-label">
                     <span>{s.label}</span>
-                    {s.origin === "teacher" && <small className="skill-origin">Ajout du professeur</small>}
-                    <small>
-                      {c.metrics.latest[s.id]
-                        ? "Observée le " +
-                          dateLabel(c.metrics.latest[s.id].date)
-                        : "Pas encore évaluée"}
-                    </small>
+
+                    {!c.metrics.latest[s.id] && <small>Pas encore évaluée</small>}
                   </div>
                   <div className="task-value" data-level={value ?? "none"}>
                     <strong><Percent value={value}/></strong>

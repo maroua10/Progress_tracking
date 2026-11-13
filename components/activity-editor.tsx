@@ -216,9 +216,7 @@ function ActivityCard({
                     />
                     <span>
                       {skill.label}
-                      {skill.origin === "teacher" && (
-                        <small>Ajout du professeur</small>
-                      )}
+
                     </span>
                   </label>
                 ))}

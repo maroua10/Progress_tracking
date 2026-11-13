@@ -107,9 +107,7 @@ export default function SkillQuickAdd({
           }}
         />
       </label>
-      <p className="hint">
-        Ajout du professeur, conservé dans la grille du chapitre.
-      </p>
+
       {error && (
         <p className="error" role="alert">
           {error}
