@@ -45,7 +45,7 @@ export async function renderChapterPdf(s: ChapterSnapshot) {
     y=top-height-35;
   }
   doc.setTitle('Bilan de chapitre - '+safe(s.title));doc.setAuthor('Repère');page();
-  text(s.title,22,true,navy,8);text(s.studentName,11,false,muted,2);text(s.currentAt?'Actualisé le '+date(s.currentAt):s.closedAt?'Clôturé le '+date(s.closedAt):'Clôture déclarée - date non renseignée',10,false,muted,10);
+  text(s.title,22,true,navy,8);text(s.currentAt?'Actualisé le '+date(s.currentAt):s.closedAt?'Clôturé le '+date(s.closedAt):'Clôture déclarée - date non renseignée',10,false,muted,10);
   const m=s.metrics;
   heading('Synthèse');
   text('Progression du chapitre : '+num(m.progression)+(m.progression===null?'':' %'),13,true);

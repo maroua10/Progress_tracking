@@ -60,7 +60,6 @@ export async function renderReportPdf(
   const printed = [
     ...(report.performances || []).map(p => p.title),
     report.title,
-    context.studentName,
     context.chapterTitle,
     report.comment,
     ...Object.values(report.summary || {}),
@@ -104,7 +103,7 @@ export async function renderReportPdf(
   pdf.setAuthor("Repère");
   pdf.setCreator("Repère - modèle de bilan de séance");
   pdf.setProducer("Repère");
-  const created = new Date(context.publishedAt);
+  const created = new Date();
   if (!Number.isNaN(+created)) {
     pdf.setCreationDate(created);
     pdf.setModificationDate(created);
@@ -223,7 +222,7 @@ export async function renderReportPdf(
   const date = frenchDate(report.date, true);
   write(date.charAt(0).toUpperCase() + date.slice(1), {size:9,color:colors.muted,gap:6});
   write(report.title, {size:19,strong:true,leading:24,gap:8});
-  write(context.studentName + "  /  " + context.chapterTitle, {size:9,strong:true,gap:14});
+  write(context.chapterTitle, {size:9,strong:true,gap:14});
   if (report.summary) {
     for (const [key, title] of [["objective","Objectif"],["strengths","Points réussis"],["focus","À consolider"],["nextStep","Prochaine étape"]] as const) {
       if (!report.summary[key]?.trim()) continue;
@@ -308,7 +307,7 @@ export async function renderReportPdf(
       thickness: 0.6,
     });
     p.drawText(
-      `Publié le ${frenchDate(context.publishedAt)} - Version ${context.revision}`,
+      `Version ${context.revision}`,
       { x: M, y: 32, size: 7.3, font: regular, color: colors.muted },
     );
     p.drawText(`${i + 1} / ${pages.length}`, {

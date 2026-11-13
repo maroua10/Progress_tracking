@@ -318,13 +318,14 @@ async function chapterSnapshot(id: string, cutoff: string, dated: boolean): Prom
     reports:chapterReports.map(r=>({date:r.payload.date,title:r.payload.title,comment:r.payload.comment,summary:r.payload.summary,skills:r.payload.skills,activities:r.payload.activities})),comparisons,
     grid:{skills:parse(g.skills),source:parse(g.source)},metrics:metrics(chapterReports,parse(g.skills))};
 }
-async function closureList(knownChapters?: Awaited<ReturnType<typeof rows>>, knownEvents?: Awaited<ReturnType<typeof rows>>) {
+async function closureList(knownChapters?: Awaited<ReturnType<typeof rows>>, knownEvents?: Awaited<ReturnType<typeof rows>>, includeDeleted=false) {
   const chapters=knownChapters || await rows("SELECT * FROM chapters WHERE student_id=?",studentId);
   const events=knownEvents?.filter(e=>e.state === "closed").reverse() || await rows("SELECT * FROM chapter_events WHERE state='closed' AND recorded_at<=? ORDER BY recorded_at DESC",now());
+  const hidden=includeDeleted?new Set<string>():hiddenResources(await lifecycle(),"chapter_report");
   return chapters.flatMap(c=>[
     ...events.filter(e=>e.chapter_id===c.id).map(e=>({id:e.id,closedAt:e.recorded_at})),
     ...(c.initial_state==='closed'?[{id:'initial-'+c.id,closedAt:null}]:[])
-  ].map(e=>({id:e.id,chapterId:c.id,closedAt:e.closedAt,kind:'chapter',name:'Bilan de clôture - '+c.title+(e.closedAt?' - '+new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Paris',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(e.closedAt)):''),url:'/api/chapters/'+c.id+'/summary?closure='+encodeURIComponent(e.id)+(e.closedAt?'&layout=latest':'')})));
+  ].map(e=>({id:e.id,chapterId:c.id,closedAt:e.closedAt,kind:'chapter',name:'Bilan de clôture - '+c.title+(e.closedAt?' - '+new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Paris',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(e.closedAt)):''),url:'/api/chapters/'+c.id+'/summary?closure='+encodeURIComponent(e.id)+(e.closedAt?'&layout=latest':'')}))).filter(e=>!hidden.has(e.id));
 }
 async function ensureDetailedGrids() {
   for (const p of programme) {
@@ -976,6 +977,15 @@ export async function handle(r: Request, path: string[]) {
     try{await db().batch(statements);}catch{fail(409,"Le chapitre n’a pas pu être ajouté. Rechargez la liste avant de réessayer.");}
     return json({id},201);
   }
+  if(path[0]==="chapter-reports" && path[1] && ((path.length===2&&r.method==="DELETE")||(path[2]==="restore"&&path.length===3&&r.method==="POST"))) {
+    requireTeacher(actor);
+    const entry=(await closureList(undefined,undefined,true)).find(e=>e.id===path[1]);
+    if(!entry)fail(404,"Bilan de chapitre introuvable.");
+    const action=r.method==="DELETE"?"delete":"restore",hidden=hiddenResources(await lifecycle(),"chapter_report");
+    if(hidden.has(entry.id)===(action==="delete"))return json({ok:true});
+    await db().prepare("INSERT INTO resource_events (id,student_id,kind,resource_id,action,recorded_at) VALUES (?,?,'chapter_report',?,?,?)").bind(uid(),studentId,entry.id,action,now()).run();
+    return json({ok:true});
+  }
   if(path[0]==="chapters" && path[1] && path[2]==="summary" && r.method==="POST") {
     requireTeacher(actor);
     const input=await body(r),entry=(await closureList()).find(e=>e.chapterId===path[1]&&(!input.closureId||e.id===input.closureId));
@@ -1053,6 +1063,7 @@ export async function handle(r: Request, path: string[]) {
         }catch{fail(503,"Le rapport n’a pas pu être composé. Réessayez dans quelques instants.");}
       }
       await identity(r);
+      if(!(await closureList()).some(e=>e.id===entry.id))fail(410,"Ce rapport est dans la corbeille.");
       if(!file)fail(503,"Le PDF est temporairement indisponible.");
       let responseBody:BodyInit=file.body;
       if(edition.id!==stored.id&&!edition.storage_key){
@@ -1063,6 +1074,7 @@ export async function handle(r: Request, path: string[]) {
       return new Response(responseBody,{headers:{"Content-Type":"application/pdf","Content-Disposition":"attachment; filename*=UTF-8''"+encodeURIComponent(entry.name+'.pdf'),"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}});
     }
     await identity(r);
+    if(!(await closureList()).some(e=>e.id===entry.id))fail(410,"Ce rapport est dans la corbeille.");
     const file=await env.BUCKET.get(stored.storage_key);if(!file) fail(503,"Le PDF est temporairement indisponible.");
     return new Response(file.body,{headers:{"Content-Type":"application/pdf","Content-Disposition":"attachment; filename*=UTF-8''"+encodeURIComponent(entry.name+'.pdf'),"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}});
   }
@@ -1383,7 +1395,14 @@ export async function handle(r: Request, path: string[]) {
     await identity(r);
     if (hiddenResources(await lifecycle(), "report").has(id))
       fail(410, "Ce bilan est dans la corbeille.");
-    const object = await env.BUCKET.get(record.storage_key);
+    const presentationKey="report-pdfs/"+studentId+"/layout-"+REPORT_PDF_TEMPLATE+"/"+revision.id+".pdf";
+    let object = await env.BUCKET.get(record.template_version===REPORT_PDF_TEMPLATE?record.storage_key:presentationKey);
+    if(!object&&record.template_version!==REPORT_PDF_TEMPLATE){
+      const bytes=await(await import("./report-pdf")).renderReportPdf(report,await pdfContext(report,revision.seq,revision.recorded_at));
+      await env.BUCKET.put(presentationKey,bytes,{httpMetadata:{contentType:"application/pdf"}});
+      await identity(r);if(hiddenResources(await lifecycle(),"report").has(id))fail(410,"Ce bilan est dans la corbeille.");
+      object=await env.BUCKET.get(presentationKey);
+    }
     if (!object) fail(404, "Le PDF de ce bilan est indisponible.");
     const inline = query.get("view") === "1";
     return new Response(object.body, {
@@ -1439,7 +1458,8 @@ export async function handle(r: Request, path: string[]) {
     if (hiddenDocs.has(referenceDocument.id)) docs.unshift(referenceDocument);
     const sessions = (await rows("SELECT id,date,status,draft FROM sessions WHERE student_id=? ORDER BY date DESC,id", studentId))
       .filter(s => hiddenReports.has(s.id)).map(s => ({id:s.id,date:s.date,status:s.status,title:reports.find(r=>r.session_id===s.id)?.payload.title || (s.draft ? parse(s.draft).title : "") || "Séance"}));
-    return json({ reports, sessions, documents: docs });
+    const hiddenChapters=hiddenResources(life,"chapter_report");
+    return json({ reports, sessions, documents: docs, chapterReports:(await closureList(undefined,undefined,true)).filter(e=>hiddenChapters.has(e.id)) });
   }
   if (
     (path[0] === "reports" || path[0] === "documents") &&

@@ -1,8 +1,9 @@
 export type SessionPedagogy = {
   date: string; phase: string; objective: string; work: string[];
-  result: string; progress: string; vigilance: string;
+  result: string; progress: string; vigilance: string; narrative?: string[];
 };
 export type ChapterPedagogy = {
+  opening?: string[];
   highlights: string[]; vigilance: string[]; scoreContext: string; conclusion: string;
   comparison: {dimension:string;before:string;after:string}[];
   dimensions: {title:string;initial:string;work:string;progress:string;vigilance:string}[];
@@ -21,11 +22,11 @@ export function parseChapterPedagogy(input:unknown):ChapterPedagogy|undefined {
   const fields=(v:any,keys:string[])=>{const o=object(v);return Object.fromEntries(keys.map(k=>[k,text(o[k])])) as any;};
   const o=object(input);
   return {
-    highlights:strings(o.highlights,8),vigilance:strings(o.vigilance,8),scoreContext:text(o.scoreContext),conclusion:text(o.conclusion),
+    ...(o.opening===undefined?{}:{opening:strings(o.opening,8)}),highlights:strings(o.highlights,8),vigilance:strings(o.vigilance,8),scoreContext:text(o.scoreContext),conclusion:text(o.conclusion),
     comparison:list(o.comparison,16,x=>fields(x,['dimension','before','after'])),
     dimensions:list(o.dimensions,8,x=>fields(x,['title','initial','work','progress','vigilance'])),
     reflexes:list(o.reflexes,8,x=>({...fields(x,['title']),items:strings(x.items)})),
     adaptations:list(o.adaptations,12,x=>fields(x,['difficulty','work','progress'])),
-    sessions:list(o.sessions,200,x=>{const s=fields(x,['date','phase','objective','result','progress','vigilance']);if(!/^\d{4}-\d{2}-\d{2}$/.test(s.date))throw Error('Date pédagogique invalide.');return{...s,work:strings(x.work,20)};}),
+    sessions:list(o.sessions,200,x=>{const s=fields(x,['date','phase','objective','result','progress','vigilance']);if(!/^\d{4}-\d{2}-\d{2}$/.test(s.date))throw Error('Date pédagogique invalide.');return{...s,work:strings(x.work,20),...(x.narrative===undefined?{}:{narrative:strings(x.narrative,30)})};}),
   };
 }

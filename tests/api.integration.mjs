@@ -335,7 +335,7 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
         assert.ok(text.includes("TD A"));
         assert.ok(text.includes("Non évaluée"));
         assert.ok(!text.includes("SECRET"));
-        assert.ok(!text.includes("Note privée"));
+        assert.ok(!text.includes("Note privée"));assert.ok(!text.includes("Publié le"));assert.ok(!text.includes("TEST — données isolées"));
         const stored = await db.prepare("SELECT * FROM report_pdfs").all();
         assert.equal(stored.results.length, 1);
         assert.equal(
@@ -1061,7 +1061,7 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
       const bytes=new Uint8Array(await downloaded.response.arrayBuffer());
       const doc=await PDFDocument.load(bytes);assert.ok(doc.getPageCount()>=2);
       const content=await pdfText(bytes);
-      for(const label of ['Les compétences du chapitre','Moyenne des contrôles','Historique pédagogique détaillé']) assert.ok(content.includes(label),label);
+      for(const label of ['Les compétences du chapitre','Le travail séance par séance']) assert.ok(content.includes(label),label);
       assert.ok(!content.includes('SECRET'));
       const metadata=await db.prepare('SELECT * FROM chapter_reports WHERE id=?').bind(archived.id).first();
       assert.equal(metadata.size,bytes.length);assert.equal(metadata.sha256,createHash('sha256').update(bytes).digest('hex'));
@@ -1077,7 +1077,7 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
       const currentPath='chapters/'+archived.chapterId+'/summary?current=1';
       assert.equal((await call(currentPath,'GET',null,null)).status,401);
       const current=await call(currentPath,'GET',null,parentCookie);assert.equal(current.status,200);
-      const currentText=await pdfText(new Uint8Array(await current.response.arrayBuffer()));assert.ok(currentText.includes('Les compétences du chapitre'));assert.ok(currentText.includes('Historique pédagogique détaillé'));assert.ok(!currentText.includes('SECRET'));
+      const currentText=await pdfText(new Uint8Array(await current.response.arrayBuffer()));assert.ok(currentText.includes('Les compétences du chapitre'));assert.ok(currentText.includes('Le travail séance par séance'));assert.ok(!currentText.includes('SECRET'));
       const again=await call(path);assert.deepEqual(new Uint8Array(await again.response.arrayBuffer()),bytes);
       // A new layout uses the frozen observations and leaves the original PDF intact.
       const originalPath='chapters/'+archived.chapterId+'/summary?closure='+archived.id;
@@ -1110,13 +1110,40 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
       assert.equal((await call('chapters/suites/summary?closure='+entry.id+'&layout=latest&edition=inconnue','GET',null,parentCookie)).status,404);
       assert.deepEqual(await db.prepare('SELECT * FROM chapter_reports WHERE id=?').bind(entry.id).first(),original);
     });
+    await t.test("suppression de rapport de chapitre : droits, accès PDF et restauration sans perte",async()=>{
+      const data=(await call('data')).data,entry=data.chapterReports.find(c=>c.chapterId==='suites'&&c.closedAt),path='chapter-reports/'+entry.id;
+      const original=await db.prepare('SELECT * FROM chapter_reports WHERE id=?').bind(entry.id).first();
+      assert.equal((await call(path,'DELETE',null,parentCookie)).status,403);
+      assert.equal((await call(path,'DELETE',null,null)).status,401);
+      assert.equal((await call(path,'DELETE')).status,200);assert.equal((await call(path,'DELETE')).status,200);
+      assert.ok(!(await call('data','GET',null,parentCookie)).data.chapterReports.some(e=>e.id===entry.id));
+      assert.equal((await call(entry.url.replace('/api/',''),'GET',null,parentCookie)).status,404);
+      assert.equal((await call('chapters/suites/summary?closure='+entry.id,'GET',null,parentCookie)).status,404);
+      assert.ok((await call('trash')).data.chapterReports.some(e=>e.id===entry.id));
+      assert.equal((await call(path+'/restore','POST',null,parentCookie)).status,403);
+      assert.equal((await call(path+'/restore','POST')).status,200);
+      assert.ok((await call('data')).data.chapterReports.some(e=>e.id===entry.id));
+      assert.equal((await call(entry.url.replace('/api/',''),'GET',null,parentCookie)).status,200);
+      assert.deepEqual(await db.prepare('SELECT * FROM chapter_reports WHERE id=?').bind(entry.id).first(),original);
+      const events=await db.prepare("SELECT * FROM resource_events WHERE kind='chapter_report' AND resource_id=?").bind(entry.id).all();assert.equal(events.results.length,2);
+    });
+    await t.test("anciens PDF : présentation sans nom ni publication, original conservé",async()=>{
+      const d=(await call('data')).data,r=d.reports[0],old=await db.prepare('SELECT * FROM report_pdfs WHERE revision_id=?').bind(r.id).first();
+      const legacy=await PDFDocument.create(),page=legacy.addPage();page.drawText('ANCIEN NOM - Publie le 01/01/2020');const bytes=await legacy.save();
+      const bucket=await mf.getR2Bucket('BUCKET');await bucket.put(old.storage_key,bytes);await db.prepare('UPDATE report_pdfs SET template_version=? WHERE id=?').bind('ancienne-version',old.id).run();
+      const result=await call('reports/'+r.session_id+'/pdf?revision='+r.seq,'GET',null,parentCookie);assert.equal(result.status,200);
+      const renewed=new Uint8Array(await result.response.arrayBuffer()),text=await pdfText(renewed);assert.ok(!text.includes('ANCIEN NOM'));assert.ok(!text.includes(d.student.name));assert.ok(!text.includes('Publié le'));
+      assert.deepEqual(new Uint8Array(await new Response((await bucket.get(old.storage_key)).body).arrayBuffer()),bytes);
+      assert.equal((await db.prepare('SELECT * FROM report_pdfs WHERE id=?').bind(old.id).first()).sha256,old.sha256);
+      const again=await call('reports/'+r.session_id+'/pdf?revision='+r.seq,'GET',null,parentCookie);assert.deepEqual(new Uint8Array(await again.response.arrayBuffer()),renewed);
+    });
     await t.test("note et durée du contrôle dans la même rubrique, sans obligation de durée", async () => {
       const target=(await call('data')).data.reports[0];const editor=(await call('sessions/'+target.session_id)).data;
       const saved=await call('sessions/'+target.session_id+'/draft','PUT',{report:{...editor.draft,assessmentTitle:'TEST Contrôle chronométré',score:12,scale:20,assessmentMinutes:42},version:editor.session.version});assert.equal(saved.status,200);
       assert.equal((await call('sessions/'+target.session_id+'/update','POST',{version:saved.data.version,requestKey:'control-duration'})).status,200);
       const updated=(await call('data')).data;const report=updated.reports.find(r=>r.session_id===target.session_id);assert.equal(report.payload.assessmentMinutes,42);
       const points=updated.chapters.find(c=>c.id===report.payload.chapterId).metrics.assessments;assert.ok(points.some(p=>p.minutes===42 && p.score===12));
-      const pdf=await call('reports/'+target.session_id+'/pdf');const pdfContent=await pdfText(new Uint8Array(await pdf.response.arrayBuffer()));assert.ok(pdfContent.includes('42 min'));const pubDate=new Intl.DateTimeFormat('fr-FR',{timeZone:'Europe/Paris',day:'2-digit',month:'2-digit',year:'numeric'}).format(new Date());assert.ok(pdfContent.includes('Publié le '+pubDate));
+      const pdf=await call('reports/'+target.session_id+'/pdf');const pdfContent=await pdfText(new Uint8Array(await pdf.response.arrayBuffer()));assert.ok(pdfContent.includes('42 min'));assert.ok(!pdfContent.includes('Publié le'));assert.ok(!pdfContent.includes(updated.student.name));
       const fresh=(await call('sessions/'+target.session_id)).data;
       const bad=await call('sessions/'+target.session_id+'/draft','PUT',{report:{...fresh.draft,assessmentMinutes:0},version:fresh.session.version});assert.equal(bad.status,400);
     });

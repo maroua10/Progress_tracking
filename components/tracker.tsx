@@ -931,7 +931,7 @@ export default function App() {
                     onTrash={() => setDialog({ type: "trash" })}
                   />
                 )}
-                {tab === "documents" && <ChapterArchives entries={data.chapterReports || []} />}
+                {tab === "documents" && <ChapterArchives entries={data.chapterReports || []} teacher={teacher} onDelete={(d:AnyData)=>remove("chapter-reports",d)} onTrash={()=>setDialog({type:"trash"})}/>}
                 {tab === "access" && teacher && (
                   <Access
                     data={data}
@@ -1172,9 +1172,9 @@ function SessionFiles({pdf,ids=[],documents}:AnyData) {
   const supports=documents.filter((d:AnyData)=>ids.includes(d.id));
   return <div className="session-files">{pdf && <FileActions label="Bilan" docs={[pdf]}/>}<FileActions label="Support" docs={supports}/></div>;
 }
-function ChapterArchives({entries}:AnyData) {
+function ChapterArchives({entries,teacher,onDelete,onTrash}:AnyData) {
   const preview=useContext(DocumentPreviewContext);
-  return <section className="panel">{!entries.length?<Empty title="Aucun bilan de chapitre"/>:<div className="chapter-archives">{entries.map((d:AnyData)=><div className="archive-row" key={d.id}><span className="pdf-mark">PDF</span><div><h2>{d.name}</h2>{d.closedAt && <time>{dateLabel(d.closedAt,{day:'numeric',month:'long',year:'numeric'})}</time>}</div><button className="icon-button" aria-label={'Visualiser '+d.name} onClick={()=>preview(d)}><Icon name="eye"/></button><a className="icon-button" aria-label={'Télécharger '+d.name} href={d.url}><Icon name="download"/></a></div>)}</div>}</section>;
+  return <section className="panel">{teacher && <div className="button-row"><button className="text-button" onClick={onTrash}><Icon name="trash" size={16}/>Corbeille</button></div>}{!entries.length?<Empty title="Aucun bilan de chapitre"/>:<div className="chapter-archives">{entries.map((d:AnyData)=><div className="archive-row" key={d.id}><span className="pdf-mark">PDF</span><div><h2>{d.name}</h2>{d.closedAt && <time>{dateLabel(d.closedAt,{day:'numeric',month:'long',year:'numeric'})}</time>}</div><button className="icon-button" aria-label={'Visualiser '+d.name} onClick={()=>preview(d)}><Icon name="eye"/></button><a className="icon-button" aria-label={'Télécharger '+d.name} href={d.url}><Icon name="download"/></a>{teacher&&<button className="icon-button danger-icon" aria-label={"Supprimer "+d.name} onClick={()=>onDelete(d)}><Icon name="trash"/></button>}</div>)}</div>}</section>;
 }
 function History({data,onReport,onEdit,onDelete,onTrash}:AnyData) {
   const [chapter,setChapter]=useState(''),[day,setDay]=useState(''),[page,setPage]=useState(1);
@@ -1998,7 +1998,6 @@ function ReportView({
       <div className="report-detail report-sheet">
         <div className="sheet-label">
           <span>REPÈRE · MATHÉMATIQUES</span>
-          <span>{data.student.name}</span>
         </div>
         <div className="report-title-line">
           <div>
@@ -2058,7 +2057,7 @@ function ReportView({
         )}
         {revisions.length > 1 && (
           <details className="form-details">
-            <summary>Historique des publications ({revisions.length})</summary>
+            <summary>Versions du bilan ({revisions.length})</summary>
             <p className="hint">
               Chaque version conserve les observations et la grille utilisées
               lors de sa publication.
@@ -2072,25 +2071,14 @@ function ReportView({
                 onClick={() => setShown(v)}
               >
                 <span>
-                  Version {v.seq} ·{" "}
-                  {dateLabel(v.recorded_at, {
-                    day: "numeric",
-                    month: "long",
-                    year: "numeric",
-                  })}
+                  Version {v.seq}
                 </span>
                 <small>{v.reason || "Publication initiale"}</small>
               </button>
             ))}
           </details>
         )}
-        <p className="hint">
-          Grille conservée : {report.gridId} · Publié le{" "}
-          {shown.recorded_at
-            ? dateLabel(shown.recorded_at)
-            : "date conservée dans l’historique"}
-          .
-        </p>
+
       </div>
       <footer className="modal-footer">
         <div className="button-row">
@@ -2630,7 +2618,7 @@ function TrashModal({ onClose, onChanged, notify }: AnyData) {
         )}
         {!items ? (
           <p role="status">Chargement…</p>
-        ) : !items.sessions.length && !items.documents.length ? (
+        ) : !items.sessions.length && !items.documents.length && !items.chapterReports?.length ? (
           <Empty title="La corbeille est vide" />
         ) : (
           <>
@@ -2656,6 +2644,7 @@ function TrashModal({ onClose, onChanged, notify }: AnyData) {
                 </button>
               </div>
             ))}
+            {!!items.chapterReports?.length && <><h3 className="editor-section">Bilans de chapitre</h3>{items.chapterReports.map((d:AnyData)=><div className="trash-row" key={d.id}><strong>{d.name}</strong><button className="button small secondary" disabled={busy} onClick={()=>restore("chapter-reports",d.id)}>Restaurer</button></div>)}</>}
             <h3 className="editor-section">Documents</h3>
             {items.documents.map((d: AnyData) => (
               <div className="trash-row" key={d.id}>
