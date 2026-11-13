@@ -1061,7 +1061,7 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
       const bytes=new Uint8Array(await downloaded.response.arrayBuffer());
       const doc=await PDFDocument.load(bytes);assert.ok(doc.getPageCount()>=2);
       const content=await pdfText(bytes);
-      for(const label of ['Bilan du chapitre','Les résultats des contrôles','Parcours pédagogique','Synthèse des compétences']) assert.ok(content.includes(label),label);
+      for(const label of ['Les compétences du chapitre','Moyenne des contrôles','Historique pédagogique détaillé']) assert.ok(content.includes(label),label);
       assert.ok(!content.includes('SECRET'));
       const metadata=await db.prepare('SELECT * FROM chapter_reports WHERE id=?').bind(archived.id).first();
       assert.equal(metadata.size,bytes.length);assert.equal(metadata.sha256,createHash('sha256').update(bytes).digest('hex'));
@@ -1077,7 +1077,7 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
       const currentPath='chapters/'+archived.chapterId+'/summary?current=1';
       assert.equal((await call(currentPath,'GET',null,null)).status,401);
       const current=await call(currentPath,'GET',null,parentCookie);assert.equal(current.status,200);
-      const currentText=await pdfText(new Uint8Array(await current.response.arrayBuffer()));assert.ok(currentText.includes('Synthèse des compétences'));assert.ok(currentText.includes('Parcours pédagogique'));assert.ok(!currentText.includes('SECRET'));
+      const currentText=await pdfText(new Uint8Array(await current.response.arrayBuffer()));assert.ok(currentText.includes('Les compétences du chapitre'));assert.ok(currentText.includes('Historique pédagogique détaillé'));assert.ok(!currentText.includes('SECRET'));
       const again=await call(path);assert.deepEqual(new Uint8Array(await again.response.arrayBuffer()),bytes);
       // A new layout uses the frozen observations and leaves the original PDF intact.
       const originalPath='chapters/'+archived.chapterId+'/summary?closure='+archived.id;
@@ -1096,13 +1096,14 @@ test(usePostgres?"API complète sur PostgreSQL isolé — aucune donnée réelle
     await t.test("correction du bilan de chapitre : édition persistante, idempotence et original conservé",async()=>{
       const data=(await call('data')).data,entry=data.chapterReports.find(c=>c.chapterId==='suites'&&c.closedAt);
       const original=await db.prepare('SELECT * FROM chapter_reports WHERE id=?').bind(entry.id).first();
-      const input={closureId:entry.id,requestKey:'test-editorial-correction',reason:'TEST précision pédagogique'};
+      const input={closureId:entry.id,requestKey:'test-editorial-correction',reason:'TEST précision pédagogique',pedagogy:{highlights:['TEST synthèse'],vigilance:[],scoreContext:'TEST contexte',conclusion:'TEST conclusion',comparison:[],dimensions:[],reflexes:[],adaptations:[],sessions:[]}};
+      assert.equal((await call('chapters/suites/summary','POST',{...input,pedagogy:{}})).status,400);
       assert.equal((await call('chapters/suites/summary','POST',input,parentCookie)).status,403);
       assert.equal((await call('chapters/suites/summary','POST',{...input,reason:''})).status,400);
       const first=await call('chapters/suites/summary','POST',input);assert.equal(first.status,200);
       assert.equal((await call('chapters/suites/summary','POST',input)).data.id,first.data.id);
       const edition=await db.prepare('SELECT * FROM chapter_reports WHERE id=?').bind(first.data.id).first();
-      const snapshot=JSON.parse(edition.payload);assert.equal(snapshot.revisionOf,entry.id);assert.equal(snapshot.revisionReason,input.reason);assert.ok(!edition.payload.includes('privateNote'));
+      const snapshot=JSON.parse(edition.payload);assert.equal(snapshot.revisionOf,entry.id);assert.equal(snapshot.revisionReason,input.reason);assert.deepEqual(snapshot.pedagogy,input.pedagogy);assert.ok(!edition.payload.includes('privateNote'));
       assert.ok(snapshot.reports.every(r=>Array.isArray(r.activities)&&Array.isArray(r.skills)));
       assert.deepEqual(await db.prepare('SELECT * FROM chapter_reports WHERE id=?').bind(entry.id).first(),original);
       const exported=await call(first.data.url.replace('/api/',''),'GET',null,parentCookie);assert.equal(exported.status,200);

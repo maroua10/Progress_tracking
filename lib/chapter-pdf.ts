@@ -6,6 +6,7 @@ export type ChapterSnapshot = {
   title: string; studentName: string; closedAt: string | null;
   currentAt?: string;
   reports?: (Pick<Report,"date"|"title"|"comment"|"summary"> & Partial<Pick<Report,"skills"|"activities">>)[];
+  pedagogy?: import("./chapter-pedagogy").ChapterPedagogy;
   revisionOf?: string;
   revisionReason?: string;
   comparisons?: {title:string;progression:number|null}[];

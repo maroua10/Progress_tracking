@@ -1,3 +1,4 @@
+import {parseChapterPedagogy} from "./chapter-pedagogy";
 import { env, resolveAccount } from "./runtime";
 import { chapterCatalogue } from "./catalogue";
 import { programme, sourceBase, referenceDocument } from "./programme";
@@ -985,6 +986,8 @@ export async function handle(r: Request, path: string[]) {
     if(old){if(old.student_id!==studentId||old.chapter_id!==path[1]||parse(old.payload).revisionOf!==entry.id)fail(409,"Identifiant de correction déjà utilisé.");return json({id,url:entry.url+"&edition="+id});}
     const at=now(),snapshot=await chapterSnapshot(path[1],at,true);
     snapshot.closedAt=entry.closedAt;snapshot.revisionOf=entry.id;snapshot.revisionReason=reason;
+    try{snapshot.pedagogy=parseChapterPedagogy(input.pedagogy);}catch{fail(400,"La synthèse pédagogique est invalide.");}
+    if(snapshot.pedagogy){const dates=new Set(snapshot.reports?.map(r=>r.date));if(new Set(snapshot.pedagogy.sessions.map(s=>s.date)).size!==snapshot.pedagogy.sessions.length||snapshot.pedagogy.sessions.some(s=>!dates.has(s.date)))fail(400,"Une séance de la synthèse ne figure pas dans le chapitre.");}
     await db().prepare("INSERT OR IGNORE INTO chapter_reports (id,student_id,chapter_id,payload,created_at) VALUES (?,?,?,?,?)").bind(id,studentId,path[1],JSON.stringify(snapshot),at).run();
     return json({id,url:entry.url+"&edition="+id});
   }
